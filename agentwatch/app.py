@@ -8,8 +8,19 @@ from textual.containers import Horizontal, Vertical
 
 from . import theme as th
 from .model import State
-from .panels import (WINDOWS, AdvisorPanel, HeaderBar, LeadPanel, LogPanel, Panel,
-                     StatusBar, TaskPanel, TeamPanel, TimelinePanel, TokensPanel)
+from .panels import (
+    WINDOWS,
+    AdvisorPanel,
+    HeaderBar,
+    LeadPanel,
+    LogPanel,
+    Panel,
+    StatusBar,
+    TaskPanel,
+    TeamPanel,
+    TimelinePanel,
+    TokensPanel,
+)
 
 
 class AgentWatchApp(App):

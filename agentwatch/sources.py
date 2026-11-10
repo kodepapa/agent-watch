@@ -179,8 +179,7 @@ class LiveCollector:
         out.sort(key=lambda e: e.ts)
         if self.record_path and out:
             with open(self.record_path, "a") as f:
-                for ev in out:
-                    f.write(json.dumps(ev.to_dict()) + "\n")
+                f.writelines(json.dumps(ev.to_dict()) + "\n" for ev in out)
         return out
 
 
@@ -189,7 +188,7 @@ class ReplayCollector:
 
     def __init__(self, path: str, speed: float = 1.0):
         with open(path) as f:
-            self.events = [Event.from_dict(json.loads(l)) for l in f if l.strip()]
+            self.events = [Event.from_dict(json.loads(line)) for line in f if line.strip()]
         self.events.sort(key=lambda e: e.ts)
         self.speed = speed
         self.idx = 0

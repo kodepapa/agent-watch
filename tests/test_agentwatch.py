@@ -73,7 +73,7 @@ def test_same_error_twice_survives_a_fix_attempt():
     s.apply(Event(ts=2, kind="tool_end", agent="backend", detail="Edit x.ts", data={"error": False}))
     s.apply(Event(ts=3, **fail))
     assert s.agents["backend"].repeat_errors == 2
-    assert any("same error x2" in l.text for l in s.log)
+    assert any("same error x2" in entry.text for entry in s.log)
     s.apply(Event(ts=4, kind="tool_end", agent="backend", detail="Bash npm test", data={"error": False}))
     assert s.agents["backend"].repeat_errors == 0
 
@@ -131,7 +131,7 @@ def test_live_updates_and_record_replay(demo_dirs, tmp_path):
             fn(start + t)
     s.apply_all(col.poll())
     assert before[0] < s.task_counts()[0] == 8
-    assert any(l.text.startswith("claimed") for l in s.log)
+    assert any(entry.text.startswith("claimed") for entry in s.log)
     rc = ReplayCollector(record, speed=1000)
     r = State(clock=rc.clock)
     for _ in range(200):

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Callable
 
 LEAD = "lead"
 
@@ -27,7 +27,7 @@ class Event:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Event":
+    def from_dict(cls, d: dict) -> Event:
         return cls(ts=float(d["ts"]), kind=d["kind"], agent=d.get("agent", ""),
                    session=d.get("session", ""), detail=d.get("detail", ""),
                    data=d.get("data") or {})

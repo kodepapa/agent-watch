@@ -120,9 +120,9 @@ class Resolver:
             if any(h in key for h in ENV_NAME_HINTS) and isinstance(val, str) and val:
                 return self._bind(p, val)
         agent_id = p.get("agent_id")
-        if agent_id and p.get("hook_event_name") not in ("SubagentStart", "SubagentStop"):
-            if agent_id in self.agent_ids:
-                return self.agent_ids[agent_id]
+        if (agent_id and agent_id in self.agent_ids
+                and p.get("hook_event_name") not in ("SubagentStart", "SubagentStop")):
+            return self.agent_ids[agent_id]
         session = p.get("session_id", "")
         if session in self.session_names:
             return self.session_names[session]

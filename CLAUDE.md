@@ -70,18 +70,21 @@ resolved. Fix any of the three assumptions in `normalize.py` and add a test.
 ## Commands
 
 ```sh
-pip install -e ".[screenshots]"
-pytest                                     # 11 tests, ~10s
+pip install -e ".[dev]"
+python -m pytest                           # 11 tests, ~10s
+ruff check .                               # config in pyproject.toml; CI runs both
 agentwatch demo                            # simulated session (sim.py)
 agentwatch demo --at 0.58 --screenshot out.png --size 132x46
 agentwatch install-hooks --dry-run         # see the settings.json change first
 agentwatch doctor
-python scripts/make_gif.py out.gif         # animated capture of the live demo
+python scripts/make_gif.py docs/demo.gif   # animated capture of the live demo
 ```
 
 Screenshots: `shot.py` renders Textual's compositor output to PNG with Pillow
 and draws box/block characters as geometry so lines meet at cell edges.
 Bundled font: JetBrains Mono (OFL, `agentwatch/fonts/`).
+The README images live in `docs/` (`screenshot.png`, `demo.gif`); regenerate
+them with the two commands above when the UI changes.
 
 ## Known gaps and ideas (not started)
 

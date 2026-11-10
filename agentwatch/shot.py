@@ -173,7 +173,7 @@ def render_png(segments, cols: int, rows: int, path: str, title: str = "", scale
             if style and style.reverse:
                 fg, bgc = bgc, fg
             if style and style.dim:
-                fg = tuple(int(a * 0.6 + b * 0.4) for a, b in zip(fg, bg))
+                fg = tuple(int(a * 0.6 + b * 0.4) for a, b in zip(fg, bg, strict=True))
             f = font_b if (style and style.bold) else font
             for ch in text:
                 px, py = pad + x * cell_w, y0 + row * cell_h

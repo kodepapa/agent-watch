@@ -10,6 +10,8 @@ import tempfile
 import threading
 import time
 
+from . import __version__
+
 HOME = os.path.expanduser("~")
 DEFAULT_EVENTS = os.environ.get("AGENTWATCH_EVENTS") or os.path.join(HOME, ".agentwatch", "events.jsonl")
 DEFAULT_CLAUDE = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
@@ -78,6 +80,9 @@ def install_hooks(args) -> int:
 
 def uninstall_hooks(args) -> int:
     path = args.settings
+    if not os.path.exists(path):
+        print(f"nothing to remove: {path} does not exist")
+        return 0
     settings = _load_settings(path)
     hooks = settings.get("hooks", {})
     removed = 0
@@ -93,6 +98,9 @@ def uninstall_hooks(args) -> int:
             hooks[event] = kept
         else:
             del hooks[event]
+    if not removed:
+        print(f"no agentwatch hooks found in {path}")
+        return 0
     if not hooks:
         settings.pop("hooks", None)
     shutil.copy2(path, f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
@@ -216,6 +224,7 @@ def replay(args) -> int:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="agentwatch",
                                 description="Live terminal dashboard for Claude Code sessions and agent teams.")
+    p.add_argument("--version", action="version", version=f"agentwatch {__version__}")
     sub = p.add_subparsers(dest="cmd")
 
     def common(sp, live=True):
@@ -267,7 +276,7 @@ def main(argv=None) -> int:
     doc.set_defaults(fn=doctor)
 
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or (argv[0] not in sub.choices and argv[0] not in ("-h", "--help")):
+    if not argv or (argv[0] not in sub.choices and argv[0] not in ("-h", "--help", "--version")):
         argv = ["watch"] + argv
     args = p.parse_args(argv)
     return args.fn(args)

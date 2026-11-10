@@ -4,19 +4,55 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentwatch"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Live terminal dashboard for Claude Code sessions and agent teams"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Konstantinos Papa" }]
 requires-python = ">=3.10"
+keywords = ["claude", "claude-code", "agents", "tui", "textual", "dashboard", "monitoring"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development",
+    "Topic :: System :: Monitoring",
+]
 dependencies = ["textual>=1.0"]
 
 [project.optional-dependencies]
 screenshots = ["pillow>=10"]
+dev = ["pillow>=10", "pytest>=8", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/kodepapa/agent-watch"
+Issues = "https://github.com/kodepapa/agent-watch/issues"
 
 [project.scripts]
 agentwatch = "agentwatch.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "agentwatch.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["agentwatch*"]
 
 [tool.setuptools.package-data]
 agentwatch = ["fonts/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# The hook must never raise into a Claude Code session, and stays stdlib-only.
+"agentwatch/hooks/emit.py" = ["SIM105"]

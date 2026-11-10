@@ -431,7 +431,7 @@ class TimelinePanel(Panel):
     def _fill_work(cells: list, per: float, max_gap: float = 25.0) -> None:
         active = [i for i, c in enumerate(cells)
                   if any(k in c for k in ("tool", "error", "prompt", "task", "done"))]
-        for a, b in zip(active, active[1:]):
+        for a, b in zip(active, active[1:], strict=False):
             if b - a > 1 and (b - a) * per <= max_gap:
                 if any(("idle" in cells[k] or "stop" in cells[k]) for k in range(a, b + 1)):
                     continue
@@ -510,7 +510,8 @@ class TokensPanel(Panel):
             lines.append(t)
         total = sum(a.tokens_read for a in agents)
         lines.append(Text(""))
-        lines.append(th.spread(Text("total", style=th.DIM), Text(th.human_tokens(total), style=f"bold {th.INK}"), inner))
+        total_text = Text(th.human_tokens(total), style=f"bold {th.INK}")
+        lines.append(th.spread(Text("total", style=th.DIM), total_text, inner))
         return th.box(w, h, title, lines)
 
 
