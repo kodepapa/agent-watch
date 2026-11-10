@@ -122,55 +122,58 @@ exits. It runs as an async hook, uses only the standard library, trims long
 fields to 400 characters, and never returns an error to Claude Code.
 Everything stays on your machine: agentwatch makes no network calls.
 
-## Use it inside herdr
+## Use it as a herdr plugin
 
-[herdr](https://herdr.dev) is a terminal multiplexer for coding agents.
-agentwatch now hosts sessions itself, so you do not need herdr. If you still
-run your Claude Code sessions in herdr panes, agentwatch connects to herdr's
-local socket on its own and adds four things:
-
-- **Your herdr agents show up by themselves.** Every agent herdr sees is
-  listed in the session list next to the sessions agentwatch hosts, with
-  herdr's status for it, even before you install the agentwatch hooks.
-  Select one and you see its screen and can type into it, for example to
-  answer a permission prompt. agentwatch only mirrors these panes: it never
-  resizes or closes them, and `home`, `end`, `page up/down` and `delete` are
-  not passed on because herdr's API has no names for them.
-- **Who needs you.** herdr detects when an agent is stuck on an approval or a
-  question. agentwatch shows that agent as `needs you`, logs it, and counts it
-  in the status bar. Hooks alone cannot tell you this.
-- **Jump to the agent.** Each agent shows its herdr pane id and a number.
-  Press `1`-`9` to focus that pane in herdr.
-- **Open as a herdr pane.** The repo is also a herdr plugin, so the dashboard
-  opens as a tab, a split or a popup from a key.
+[herdr](https://herdr.dev) is a terminal multiplexer for coding agents. If
+herdr is where your sessions live, keep it that way and add agentwatch as a
+pane that shows what every agent is doing:
 
 ```sh
 uv tool install git+https://github.com/kodepapa/agent-watch   # the plugin runs the `agentwatch` command
-agentwatch install-hooks
+agentwatch install-hooks                                      # optional, see below
 herdr plugin install kodepapa/agent-watch
 ```
 
-Then bind a key in your herdr config:
+Bind a key in your herdr config:
 
 ```toml
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"
-command = "kodepapa.agentwatch.popup"    # or .open (tab) or .side (split)
-description = "agentwatch"
+command = "kodepapa.agentwatch.popup"    # or .side, or .open
+description = "agents"
 ```
 
-Opened as a popup, agentwatch works as a switcher: press the key, see the
-whole team, press a number, and you are in that agent's pane with the popup
-closed. As a tab or split it stays open after a jump.
+| action | what opens |
+|---|---|
+| `kodepapa.agentwatch.popup` | the agents view as a popup: press a number and you are in that agent's pane, popup closed |
+| `kodepapa.agentwatch.side` | the agents view in a split beside the current pane, staying open |
+| `kodepapa.agentwatch.open` | the full dashboard (tasks, advisor, timeline, log, tokens) in a tab |
 
-How sessions are matched to panes: the hook records the `HERDR_PANE_ID` that
-herdr sets in every pane, and herdr's own Claude integration
-(`herdr integration install claude`) reports session ids as a second route.
-Restart Claude sessions after installing the hooks. `agentwatch doctor` lists
-every agent herdr sees and which session it was matched to, and `--no-herdr`
-turns the connection off. Subagents share their parent's pane, so they have no
-jump key of their own.
+The agents view lists every agent herdr knows about, with no setup. For each
+one: its state (`working`, `idle`, `done`, or `needs you` when it is stopped
+on an approval or a question), and its folder. `1`-`9` or `up`/`down` +
+`enter` focus that agent's pane in herdr.
+
+With the agentwatch hooks installed (restart your Claude sessions afterwards)
+each Claude Code agent also gets:
+
+- how long it has been in its current state
+- what it is running right now
+- a strip of its last 10 minutes: tool calls, errors, and stretches spent
+  waiting for you in amber
+- a shared timeline under the list (`w` changes its window)
+
+Sessions are named after their folder. The hook finds the pane through the
+`HERDR_PANE_ID` herdr sets in every pane; herdr's own Claude integration
+(`herdr integration install claude`) is a second route. `agentwatch doctor`
+lists every agent herdr sees and which session it was matched to.
+
+Outside herdr, plain `agentwatch` also lists herdr's agents next to the
+sessions it hosts itself, and lets you view and type into them. It only
+mirrors those panes: it never resizes or closes them, and `home`, `end`,
+`page up/down` and `delete` are not passed on because herdr's API has no names
+for them. `--no-herdr` turns the connection off.
 
 ### Terminal fonts
 
@@ -192,7 +195,8 @@ On the dashboard: `q` quit, `p` pause, `t` switch team, `w` timeline window (fit
 | `agentwatch demo` | simulated session (`--speed 4`, `--at 0.6` to freeze at 60%) |
 | `agentwatch replay file.jsonl` | play back a recording (`--speed`, `--at`) |
 | `agentwatch doctor` | show raw hook keys, resolved agents, teams, tasks, advisor calls and herdr panes |
-| `agentwatch herdr open` | open the dashboard in a herdr pane (`--placement tab`, `split`, `popup`) |
+| `agentwatch --glance` | the compact agents view the herdr plugin opens |
+| `agentwatch herdr open` | open agentwatch in a herdr pane (`--view glance` or `dashboard`, `--placement tab`, `split`, `popup`) |
 | `... --screenshot out.png` | render one frame to PNG or SVG and exit (`--size 132x46`) |
 
 ## Where each panel's data comes from
@@ -265,7 +269,7 @@ Tested on Linux. macOS should work; Windows is untested.
 ```sh
 git clone https://github.com/kodepapa/agent-watch && cd agent-watch
 uv sync --extra dev
-uv run pytest                    # 38 tests, about 20s (two need tmux)
+uv run pytest                    # 41 tests, about 20s (two need tmux)
 uv run ruff check .
 uv run agentwatch demo --at 0.58 --screenshot docs/screenshot.png   # regenerate the screenshot
 uv run python scripts/make_gif.py docs/demo.gif                     # regenerate the GIF

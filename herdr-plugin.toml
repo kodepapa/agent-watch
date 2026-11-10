@@ -1,33 +1,41 @@
-# herdr plugin: open the agentwatch dashboard inside herdr.
+# herdr plugin: see what every agent is doing without leaving herdr.
 #   herdr plugin install kodepapa/agent-watch
 # Needs the `agentwatch` command on PATH (uv tool install, or brew).
 id = "kodepapa.agentwatch"
 name = "agentwatch"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.0"
-description = "Live dashboard for Claude Code sessions and agent teams: tasks, timeline, advisor calls, who needs you"
+description = "Every agent at a glance: state, time in state, current action, activity timeline, who needs you"
 platforms = ["linux", "macos"]
 
+# Compact view: one row per herdr agent with an activity strip, plus the timeline.
+[[panes]]
+id = "glance"
+title = "agents"
+placement = "split"
+command = ["agentwatch", "--glance"]
+
+# Full dashboard: tasks, advisor calls, timeline, log, tokens.
 [[panes]]
 id = "dashboard"
 title = "agentwatch"
 placement = "tab"
-command = ["agentwatch"]
-
-[[actions]]
-id = "open"
-title = "Open agentwatch in a tab"
-contexts = ["global"]
-command = ["agentwatch", "herdr", "open", "--placement", "tab"]
-
-[[actions]]
-id = "popup"
-title = "Open agentwatch as a popup"
-contexts = ["global"]
-command = ["agentwatch", "herdr", "open", "--placement", "popup"]
+command = ["agentwatch", "--dashboard", "--no-sessions"]
 
 [[actions]]
 id = "side"
-title = "Open agentwatch in a split"
+title = "agentwatch: agents beside this pane"
 contexts = ["global"]
-command = ["agentwatch", "herdr", "open", "--placement", "split"]
+command = ["agentwatch", "herdr", "open", "--view", "glance", "--placement", "split"]
+
+[[actions]]
+id = "popup"
+title = "agentwatch: agents popup (press a number to jump)"
+contexts = ["global"]
+command = ["agentwatch", "herdr", "open", "--view", "glance", "--placement", "popup"]
+
+[[actions]]
+id = "open"
+title = "agentwatch: full dashboard in a tab"
+contexts = ["global"]
+command = ["agentwatch", "herdr", "open", "--view", "dashboard", "--placement", "tab"]

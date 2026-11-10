@@ -6,6 +6,7 @@ import time
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
@@ -69,6 +70,9 @@ class AgentWatchApp(App):
     #sessions {{ width: 34; }}
     #terminal {{ width: 1fr; }}
     #dashboard {{ height: 1fr; }}
+    #glance {{ height: 1fr; }}
+    #glance #sessions {{ width: 1fr; height: 1fr; }}
+    #glance-timeline {{ height: 8; }}
     #header {{ height: 2; }}
     #main {{ height: 1fr; }}
     #advisor {{ width: 32; }}
@@ -85,16 +89,19 @@ class AgentWatchApp(App):
     BINDINGS = [("q", "quit", "quit"), ("p", "toggle_pause", "pause"),
                 ("t", "next_team", "team"), ("w", "zoom", "window"),
                 ("plus,equals_sign", "faster", "faster"), ("minus", "slower", "slower"),
-                *[(str(n), f"jump({n})", f"jump {n}") for n in range(1, 10)]]
+                *[(str(n), f"jump({n})", f"jump {n}") for n in range(1, 10)],
+                ("up,k", "move(-1)", "up"), ("down,j", "move(1)", "down"), ("enter", "go", "go")]
 
     def __init__(self, collector, mode: str = "live", advisor_model: str = "",
                  tick: float = 0.25, events_hint: str = "", herdr=None, leave_after_jump: bool = False,
-                 mux=None, prefix: str = "ctrl+b", view: str = "sessions"):
+                 mux=None, prefix: str = "ctrl+b", view: str = "sessions", host_sessions: bool = True):
         super().__init__()
         self.collector = collector
         self.mux = mux                           # mux.Mux when agentwatch hosts the sessions, else None
-        self.herdr_host = HerdrHost(herdr) if herdr else None    # herdr's agents, mirrored as sessions
-        self.hosting = bool(mux or herdr)        # is there a sessions view at all
+        # glance: the compact view for a herdr pane. herdr shows the terminals; we show their state.
+        self.glance = view == "glance" and herdr is not None
+        self.hosting = host_sessions and bool(mux or herdr)      # is there a list of sessions at all
+        self.herdr_host = HerdrHost(herdr) if (herdr and self.hosting) else None   # herdr's agents as sessions
         self.command = mux.command if mux else "claude"
         self.prefix = prefix
         self.prefix_armed = False
@@ -129,6 +136,12 @@ class AgentWatchApp(App):
         return self.mode
 
     def compose(self) -> ComposeResult:
+        if self.glance:
+            with Vertical(id="glance"):
+                yield SessionList(id="sessions")
+                yield TimelinePanel(id="glance-timeline")
+            yield StatusBar(id="status")
+            return
         if self.hosting:
             with Horizontal(id="workspace"):
                 yield SessionList(id="sessions")
@@ -148,7 +161,9 @@ class AgentWatchApp(App):
         yield StatusBar(id="status")
 
     def on_mount(self) -> None:
-        if self.hosting:
+        if self.glance:
+            self._refresh_sessions()
+        elif self.hosting:
             self._refresh_sessions()
             self.show_view(self.view)
         self.tick()
@@ -166,7 +181,7 @@ class AgentWatchApp(App):
         self.set_focus(self.terminal if view == "sessions" else None)
 
     def _refresh_sessions(self) -> None:
-        if not self.query("#terminal"):          # a tick can land while the app is closing
+        if not self.query("#sessions"):          # a tick can land while the app is closing
             return
         try:
             found = self.mux.sessions() if self.mux else []
@@ -177,11 +192,15 @@ class AgentWatchApp(App):
         self.sessions = found
         names = [s.name for s in self.sessions]
         if self.active not in names:
-            self.active = names[-1] if names else ""
-        self.terminal.show(self.active)
+            self.active = (names[0] if self.glance else names[-1]) if names else ""
+        if not self.glance:
+            self.terminal.show(self.active)
 
     def select_session(self, name: str) -> None:
         self.active = name
+        if self.glance:                          # herdr shows the terminal: send its focus there
+            self.action_go()
+            return
         self.terminal.show(name)
         if self.view != "sessions":
             self.show_view("sessions")
@@ -220,7 +239,7 @@ class AgentWatchApp(App):
 
     def handle_prefix(self, key: str) -> bool:
         """Prefix-key handling shared by the terminal and the dashboard. True when the key was ours."""
-        if not self.hosting:
+        if not self.hosting or self.glance:
             return False
         if self.closing:
             name, self.closing = self.closing, ""
@@ -271,6 +290,12 @@ class AgentWatchApp(App):
         self.exit()
 
     def tick(self) -> None:
+        try:
+            self._tick()
+        except NoMatches:                        # the timer fired while the app was closing
+            return
+
+    def _tick(self) -> None:
         self.frame += 1
         if self.hosting and self.frame % 4 == 0:
             self._refresh_sessions()
@@ -287,6 +312,14 @@ class AgentWatchApp(App):
             panel.refresh()
 
     def _fit_heights(self) -> None:
+        if self.glance:
+            timeline = self.query_one("#glance-timeline", TimelinePanel)
+            room = self.size.height - 1 - max(1, len(self.sessions)) * SessionList.ROW_H - 3
+            want = min(len(timeline.rows()) + 4, max(0, room))
+            timeline.display = want >= 5 and bool(self.state.agents)
+            if timeline.display and (timeline.styles.height is None or timeline.styles.height.value != want):
+                timeline.styles.height = want
+            return
         team = self.query_one("#team", TeamPanel)
         mates = len(self.state.teammates())
         width = self.query_one("#right").size.width or 80
@@ -322,8 +355,27 @@ class AgentWatchApp(App):
         self.state = self._new_state()
         self.notify(f"watching team {nxt}", timeout=2)
 
+    def action_move(self, step: int) -> None:
+        """Glance view: move the selection."""
+        names = [s.name for s in self.sessions]
+        if self.glance and names:
+            at = names.index(self.active) if self.active in names else 0
+            self.active = names[(at + step) % len(names)]
+
+    def action_go(self) -> None:
+        """Glance view: focus the selected agent's pane in herdr."""
+        current = next((s for s in self.sessions if s.name == self.active), None)
+        if self.glance and current:
+            self.run_worker(lambda: self._jump(current.title or current.pane, current.pane),
+                            thread=True, exclusive=True)
+
     def action_jump(self, n: int) -> None:
         """Go to the nth agent: its hosted session, or its herdr pane."""
+        if self.glance:
+            if n <= len(self.sessions):
+                self.active = self.sessions[n - 1].name
+                self.action_go()
+            return
         targets = self.state.jump_targets()
         if n > len(targets):
             return

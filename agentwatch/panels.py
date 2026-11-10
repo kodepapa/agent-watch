@@ -599,7 +599,9 @@ class StatusBar(Panel):
         options, style = [full], th.FAINT
         if s.jump_targets() and (app.herdr or app.hosting):
             options = ["1-9 jump  " + full, "1-9 jump  q quit"]
-        if app.hosting and app.closing:
+        if app.glance:
+            options = ["1-9 jump  up/down + enter  w window  q quit", "1-9 jump  q quit", "1-9 jump"]
+        elif app.hosting and app.closing:
             options, style = [f"close {app.closing}?  y yes  any other key no"], f"bold {th.WARN}"
         elif app.hosting and app.prefix_armed:
             options, style = ["c new  1-9 switch  d dashboard  x close  q detach"], f"bold {th.WARN}"

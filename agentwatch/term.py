@@ -216,12 +216,15 @@ class SessionList(Panel):
                 for line in (row, detail, trail):
                     line.stylize(f"on {th.SELECT}")
             lines += [row, detail, trail, Text("")]
-        if not app.sessions:
+        if not app.sessions and app.glance:
+            lines = [Text("herdr reports no agents", style=th.DIM),
+                     Text("start one in a herdr pane and it shows up here", style=th.FAINT)]
+        elif not app.sessions:
             lines = [Text("none yet", style=th.DIM), Text(f"{app.prefix} then c", style=th.FAINT)]
         elif len(lines) < h - 3:
             lines += [Text("")] * (h - 3 - len(lines))
             lines.append(Text(f"strip: last {fmt_span(self.SPAN)}", style=th.FAINT))
-        title = Text("sessions", style=f"bold {th.INK}")
+        title = Text("agents" if app.glance else "sessions", style=f"bold {th.INK}")
         waiting = sum(1 for sess in app.sessions
                       if (by_pane.get(sess.pane) if sess.host == "herdr" else by_term.get(sess.name)) is None
                       and sess.status == "blocked")

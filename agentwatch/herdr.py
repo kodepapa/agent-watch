@@ -114,10 +114,10 @@ class Herdr:
                 raise
             self.call("pane.focus", {"pane_id": pane_id})
 
-    def open_dashboard(self, placement: str = "tab", env=None) -> dict:
-        """Open agentwatch in a herdr pane through the plugin's `dashboard` entrypoint."""
+    def open_dashboard(self, placement: str = "tab", env=None, entrypoint: str = "dashboard") -> dict:
+        """Open agentwatch in a herdr pane through one of the plugin's entrypoints."""
         env = os.environ if env is None else env
-        params: dict = {"plugin_id": env.get("HERDR_PLUGIN_ID") or PLUGIN_ID, "entrypoint": "dashboard",
+        params: dict = {"plugin_id": env.get("HERDR_PLUGIN_ID") or PLUGIN_ID, "entrypoint": entrypoint,
                         "placement": placement, "focus": True,
                         "env": {"AGENTWATCH_HERDR_PLACEMENT": placement}}
         if placement == "popup":

@@ -103,6 +103,7 @@ class Resolver:
         self.lead_session = ""
         self.panes: dict[str, str] = {}          # display name -> herdr pane id
         self.terms: dict[str, str] = {}          # display name -> hosted session name
+        self.team_active = False                 # a team config was seen: keep lead/teammate naming
         self._type_counts: dict[str, int] = {}
 
     def learn_member(self, agent_id: str, name: str) -> None:
@@ -139,6 +140,15 @@ class Resolver:
         if isinstance(hosted, str) and hosted:
             # A session agentwatch hosts is called what its tab is called.
             return self._bind(p, hosted)
+        folder = os.path.basename(str(p.get("cwd") or "").rstrip("/"))
+        if p.get("_herdr") and folder and session and not self.team_active:
+            # Independent sessions in herdr panes: the folder says more than "session-1a2b3c".
+            taken = set(self.session_names.values())
+            name, i = folder, 1
+            while name in taken:
+                i += 1
+                name = f"{folder}-{i}"
+            return self._bind(p, name)
         if not self.lead_session and session:
             self.lead_session = session
             self.session_names[session] = LEAD
@@ -251,6 +261,7 @@ STATUS_MAP = {"done": "completed", "complete": "completed", "completed": "comple
 
 def team_event(team: str, cfg: dict, ts: float, r: Resolver, known: set) -> Event:
     lead_id = cfg.get("leadAgentId") or cfg.get("lead_agent_id") or cfg.get("lead") or ""
+    r.team_active = True
     members = []
     for m in cfg.get("members") or []:
         if not isinstance(m, dict):

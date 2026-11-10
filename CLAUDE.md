@@ -122,6 +122,17 @@ terminal multiplexer for parallel agent sessions. Integration points:
   never resized or closed. With herdr but no tmux the sessions view still
   works; only starting new sessions needs tmux.
 
+- Glance view (`agentwatch --glance`, `app.glance`): what the user asked for
+  after trying the hosted sessions: "just a herdr plugin with the timelines
+  and visual improvements". herdr keeps the terminals; this view is only the
+  `SessionList` (one row per herdr agent: state, time in state, current
+  action, 10-minute strip) plus a `TimelinePanel`. No tmux, no `TerminalView`,
+  no dashboard, and the prefix key is left to herdr. `1`-`9`, or up/down +
+  enter, call `agent.focus`. Plugin actions: `popup` and `side` open it,
+  `open` opens the full dashboard (`--dashboard --no-sessions`).
+- Independent sessions in herdr are named after their folder
+  (`Resolver.name_for`), unless a team config is active.
+
 herdr field names come from its published schema
 (`docs/next/api/herdr-api.schema.json`, protocol 22), so they live in
 `herdr.py`, not `normalize.py`. Not yet run against a live herdr: tests use
@@ -152,7 +163,7 @@ resolved. Fix any of the three assumptions in `normalize.py` and add a test.
 
 ```sh
 uv sync --extra dev                               # uv only, no pip; uv.lock is committed
-uv run pytest                                     # 38 tests, ~20s; two need tmux
+uv run pytest                                     # 41 tests, ~20s; two need tmux
 uv run ruff check .                               # config in pyproject.toml; CI runs both
 uv run agentwatch demo                            # simulated session (sim.py)
 uv run agentwatch demo --at 0.58 --screenshot out.png --size 132x46

@@ -317,3 +317,69 @@ def test_app_discovers_herdr_agents_without_tmux(fake, tmp_path):
             assert not any(r["method"] in ("pane.close", "pane.resize") for r in fake.requests)
 
     asyncio.run(run())
+
+
+# ---- glance: the compact view for a herdr pane ---------------------------------
+
+def test_herdr_sessions_are_named_after_their_folder():
+    r = Resolver()
+
+    def name(session, cwd):
+        return hook_events({"hook_event_name": "Stop", "session_id": session, "cwd": cwd, "_ts": 1,
+                            "_herdr": {"pane_id": "w1:p1"}}, r)[0].agent
+
+    assert name("s1", "/code/api") == "api"
+    assert name("s2", "/code/web/") == "web"
+    assert name("s3", "/other/api") == "api-2"          # same folder name, different session
+    assert name("s1", "/code/api/src") == "api"         # a session keeps its name when it changes folder
+    team = Resolver()
+    team.team_active = True                             # in a team, lead and teammate names stay
+    assert hook_events({"hook_event_name": "Stop", "session_id": "s1", "cwd": "/code/api", "_ts": 1,
+                        "_herdr": {"pane_id": "w1:p1"}}, team)[0].agent == "lead"
+
+
+def test_glance_view_lists_herdr_agents_and_jumps(fake, tmp_path):
+    import asyncio
+
+    from agentwatch.app import AgentWatchApp
+    events = tmp_path / "events.jsonl"
+    now = time.time()
+    events.write_text("".join(json.dumps(p) + "\n" for p in [
+        {"hook_event_name": "UserPromptSubmit", "session_id": "sess-lead", "cwd": "/code/api",
+         "_ts": now - 120, "_herdr": {"pane_id": "w1:p1"}, "prompt": "go"},
+        {"hook_event_name": "PreToolUse", "session_id": "sess-lead", "cwd": "/code/api", "_ts": now - 60,
+         "_herdr": {"pane_id": "w1:p1"}, "tool_name": "Bash", "tool_input": {"command": "npm test"}}]))
+    client = Herdr(fake.path)
+    watcher = HerdrWatcher(client)
+    watcher.poll_once()
+    col = LiveCollector(str(events), str(tmp_path / "claude"), since=3600, herdr=watcher)
+    app = AgentWatchApp(col, mode="live", herdr=client, view="glance", leave_after_jump=True)
+
+    async def run():
+        async with app.run_test(size=(48, 34)) as pilot:
+            await pilot.pause(1.2)
+            assert app.glance and not app.query("#terminal") and not app.query("#dashboard")
+            listing = app.query_one("#sessions").render().plain
+            assert "api" in listing and "working" in listing and "Bash npm test" in listing
+            assert "needs you" in listing and "w1:p2" in listing      # no hook events: herdr's status
+            assert app.query_one("#glance-timeline").display
+            assert not any(r["method"] == "pane.read" for r in fake.requests)   # nothing is mirrored
+
+            assert app.active == "herdr:w1:p1"
+            await pilot.press("down")
+            assert app.active == "herdr:w1:p2"
+            await pilot.press("ctrl+b", "c")                        # the prefix belongs to herdr here
+            assert len(app.screen_stack) == 1
+            await pilot.press("enter")
+            await pilot.pause(0.5)
+        assert not app.is_running                                   # opened as a popup: it leaves after a jump
+
+    asyncio.run(run())
+    assert fake.requests[-1]["method"] == "agent.focus"
+    assert fake.requests[-1]["params"] == {"target": "w1:p2"}
+
+
+def test_open_glance_request(fake):
+    Herdr(fake.path).open_dashboard("split", env={"HERDR_PANE_ID": "w1:p1"}, entrypoint="glance")
+    params = fake.requests[-1]["params"]
+    assert (params["entrypoint"], params["placement"], params["direction"]) == ("glance", "split", "right")

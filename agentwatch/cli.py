@@ -211,12 +211,17 @@ def watch(args) -> int:
         watcher = HerdrWatcher(client)
         watcher.poll_once()
         watcher.start()
-    mux = None if (args.no_sessions or args.screenshot) else _mux(args.command)
+    if args.glance and not client:
+        print("--glance shows herdr's agents, and no herdr server is running", file=sys.stderr)
+        return 1
+    mux = None if (args.no_sessions or args.screenshot or args.glance) else _mux(args.command)
     col = LiveCollector(args.events, args.claude_dir, team=args.team,
                         since=parse_duration(args.since), record_path=args.record, herdr=watcher)
     app = AgentWatchApp(col, mode="live", advisor_model=args.advisor_model, events_hint=args.events,
                         herdr=client, mux=mux, prefix=args.prefix,
-                        view="dashboard" if (args.dashboard or args.screenshot) else "sessions",
+                        host_sessions=not args.no_sessions,
+                        view="glance" if args.glance else
+                        "dashboard" if (args.dashboard or args.screenshot) else "sessions",
                         leave_after_jump=bool(client) and os.environ.get("AGENTWATCH_HERDR_PLACEMENT") in TRANSIENT)
     try:
         return _run(app, args)
@@ -288,7 +293,7 @@ def herdr_open(args) -> int:
     from .herdr import PLUGIN_ID, Herdr, HerdrError
     client = Herdr()
     try:
-        client.open_dashboard(args.placement)
+        client.open_dashboard(args.placement, entrypoint=args.view)
     except HerdrError as e:
         print(f"could not open agentwatch in herdr: {e}", file=sys.stderr)
         if e.code == "unreachable":
@@ -362,6 +367,8 @@ def main(argv=None) -> int:
     w.add_argument("--no-herdr", action="store_true", help="do not talk to a running herdr server")
     w.add_argument("--no-sessions", action="store_true", help="dashboard only: do not host sessions")
     w.add_argument("--dashboard", action="store_true", help="start on the dashboard instead of the sessions")
+    w.add_argument("--glance", action="store_true",
+                   help="compact view for a herdr pane: every herdr agent's state, activity and timeline")
     w.add_argument("--command", default="", help="program a new session runs (default: claude)")
     w.add_argument("--prefix", default=os.environ.get("AGENTWATCH_PREFIX") or "ctrl+b",
                    help="key that starts an agentwatch command inside a session (default: ctrl+b)")
@@ -406,6 +413,8 @@ def main(argv=None) -> int:
     hsub = h.add_subparsers(dest="herdr_cmd", required=True)
     ho = hsub.add_parser("open", help="open agentwatch in a herdr pane (needs the herdr plugin)")
     ho.add_argument("--placement", choices=["tab", "split", "popup", "overlay", "zoomed"], default="tab")
+    ho.add_argument("--view", choices=["dashboard", "glance"], default="dashboard",
+                    help="the full dashboard, or the compact glance view")
     ho.set_defaults(fn=herdr_open)
 
     w.set_defaults(fn=watch)
