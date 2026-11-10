@@ -369,6 +369,87 @@ class TeamPanel(Panel):
                       border=color, right=right)
 
 
+# Seconds per timeline cell in "fit" mode. Fixed steps keep the scale still between
+# thresholds instead of rescaling on every frame.
+STEPS = (0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 40, 50, 60, 90, 120, 180, 300, 600)
+STARTS, ENDS = ("prompt", "tool", "error"), ("idle", "stop")
+
+
+def activity(marks, first_bucket: int, per: float, track: int, live: str = "") -> list[dict]:
+    """Timeline cells for one row.
+
+    Cell i covers the absolute time bucket `first_bucket + i` of `per` seconds, so a mark
+    stays in its cell as time passes and only moves left one whole cell at a time.
+    Between marks the row carries a state: "work" from a prompt or tool call until the
+    agent stops or goes idle, "wait" while it needs the user. `live` is that state right
+    now ("work", "wait" or ""), painted from the last mark up to the present.
+    """
+    cells = [dict() for _ in range(track)]
+    mode, at = "", 0                     # carried state, and the first cell not painted with it yet
+    for ts, mark in sorted(marks):       # sources interleave, so arrival order is not time order
+        i = min(track - 1, int(ts // per) - first_bucket)
+        if i >= 0:
+            if mode:
+                for k in range(at, i):
+                    cells[k][mode] = 1
+            key = "work" if mark == "go" else mark
+            cells[i][key] = cells[i].get(key, 0) + 1
+            at = max(at, i + 1)
+        if mark in STARTS or mark == "go":
+            mode = "work"
+        elif mark in ENDS:
+            mode = ""
+        elif mark == "wait":
+            mode = "wait"
+    if live:
+        for k in range(at, track):
+            cells[k][live] = 1
+    return cells
+
+
+def cell(c: dict, color: str, is_now: bool = False) -> Text:
+    g, sp = th.G, th.G["spark"]
+    if c.get("error"):
+        return Text(g["error"], style=f"bold {th.ERROR}")
+    if c.get("advisor"):
+        return Text(g["advisor"], style=f"bold {th.ADVISOR}")
+    if c.get("done"):
+        return Text(g["task_done"], style=f"bold {th.OK}")
+    if c.get("task"):
+        return Text(g["claim"], style=th.INK)
+    if c.get("prompt"):
+        return Text(g["prompt"], style=f"bold {color}")
+    if c.get("wait"):
+        return Text(sp[2], style=f"bold {th.WARN}")
+    n = c.get("tool", 0)
+    if n:
+        return Text(sp[min(7, 3 + 2 * (n - 1))], style=color)
+    if c.get("work"):
+        return Text(sp[2], style=color)
+    if c.get("idle") or c.get("stop"):
+        return Text(sp[1], style=th.DIM)
+    if is_now:
+        return Text(g["now"], style=th.DIM)
+    return Text(g["dot"], style=th.FAINT)
+
+
+def live_mode(a: Agent | None) -> str:
+    if a is None:
+        return ""
+    return "wait" if a.blocked else "work" if a.state == "working" else ""
+
+
+def strip(s: State, a: Agent, width: int, span: float = 600) -> Text:
+    """A one-line activity strip for an agent covering the last `span` seconds."""
+    per = span / max(1, width)
+    first = int(s.now() // per) - (width - 1)
+    color = th.agent_color(a.name, a.color)
+    out = Text()
+    for c in activity(s.marks.get(a.name, ()), first, per, width, live_mode(a)):
+        out.append_text(cell(c, color))
+    return out
+
+
 class TimelinePanel(Panel):
     LABEL = 10
 
@@ -381,44 +462,37 @@ class TimelinePanel(Panel):
             rows.append("tasks")
         return rows + [a.name for a in s.ordered_agents()]
 
-    def span(self) -> float:
+    def scale(self, track: int) -> tuple[float, bool]:
+        """Seconds per cell, and whether the window is fitted to the session."""
         s = self.state
         fixed = WINDOWS[self.app.window_idx]
         if fixed:
-            return fixed
-        if not s.first_ts:
-            return 120
-        return min(max(s.now() - s.first_ts, 20) * 1.04, 7200)
+            return fixed / track, False
+        elapsed = max(s.now() - s.first_ts, 20) if s.first_ts else 120
+        want = min(elapsed * 1.04, 7200) / track
+        return next((step for step in STEPS if step >= want), STEPS[-1]), True
 
     def draw(self, w, h):
         s = self.state
         inner = w - 4
-        span = self.span()
+        track = max(10, inner - self.LABEL)
+        per, fitted = self.scale(track)
+        span = per * track
         title = Text("timeline", style=f"bold {th.INK}")
-        right = Text(f"last {fmt_span(span)}" + ("" if WINDOWS[self.app.window_idx] else " · fit"),
-                     style=th.DIM)
+        right = Text(f"last {fmt_span(span)}" + (" · fit" if fitted else ""), style=th.DIM)
         rows = self.rows()
         if not rows:
             return th.box(w, h, title, [Text("activity per agent shows up here", style=th.DIM)],
                           right=right)
-        track = max(10, inner - self.LABEL)
-        now = s.now()
-        start = now - span
-        per = span / track
+        first = int(s.now() // per) - (track - 1)
         lines = []
         for name in rows:
-            cells = [dict() for _ in range(track)]
-            for ts, mark in reversed(s.marks.get(name, ())):
-                if ts < start:
-                    break
-                i = min(track - 1, int((ts - start) / per))
-                cells[i][mark] = cells[i].get(mark, 0) + 1
-            if name not in ("advisor", "tasks"):
-                self._fill_work(cells, per)
-            color = th.agent_color(name, s.agents[name].color if name in s.agents else "")
+            agent = s.agents.get(name)
+            cells = activity(s.marks.get(name, ()), first, per, track, live_mode(agent))
+            color = th.agent_color(name, agent.color if agent else "")
             line = th.fit(Text(name, style=f"bold {color}"), self.LABEL)
             for i, c in enumerate(cells):
-                line.append_text(self._cell(c, color, i == track - 1))
+                line.append_text(cell(c, color, i == track - 1))
             lines.append(line)
         axis = [Text(th.G["todo"], style=th.FAINT) for _ in range(track)]
         labels = [(0, f"-{fmt_span(span)}"), (track // 2, f"-{fmt_span(span / 2)}"),
@@ -434,6 +508,7 @@ class TimelinePanel(Panel):
         legend = Text(" " * self.LABEL)
         sp = th.G["spark"]
         for sym, style, label in ((sp[7], th.INK, "busy"), (sp[2], th.INK, "working"),
+                                  (sp[2], th.WARN, "needs you"),
                                   (th.G["error"], th.ERROR, "error"),
                                   (th.G["advisor"], th.ADVISOR, "advisor"),
                                   (th.G["task_done"], th.OK, "task done"),
@@ -443,41 +518,6 @@ class TimelinePanel(Panel):
             legend.append(f" {label}   ", style=th.FAINT)
         lines.append(legend)
         return th.box(w, h, title, lines, right=right)
-
-    @staticmethod
-    def _fill_work(cells: list, per: float, max_gap: float = 25.0) -> None:
-        active = [i for i, c in enumerate(cells)
-                  if any(k in c for k in ("tool", "error", "prompt", "task", "done"))]
-        for a, b in zip(active, active[1:], strict=False):
-            if b - a > 1 and (b - a) * per <= max_gap:
-                if any(("idle" in cells[k] or "stop" in cells[k]) for k in range(a, b + 1)):
-                    continue
-                for k in range(a + 1, b):
-                    cells[k]["work"] = 1
-
-    @staticmethod
-    def _cell(c: dict, color: str, is_now: bool) -> Text:
-        g, sp = th.G, th.G["spark"]
-        if c.get("error"):
-            return Text(g["error"], style=f"bold {th.ERROR}")
-        if c.get("advisor"):
-            return Text(g["advisor"], style=f"bold {th.ADVISOR}")
-        if c.get("done"):
-            return Text(g["task_done"], style=f"bold {th.OK}")
-        if c.get("task"):
-            return Text(g["claim"], style=th.INK)
-        if c.get("prompt"):
-            return Text(g["prompt"], style=f"bold {color}")
-        n = c.get("tool", 0)
-        if n:
-            return Text(sp[min(7, 3 + 2 * (n - 1))], style=color)
-        if c.get("work"):
-            return Text(sp[2], style=color)
-        if c.get("idle") or c.get("stop"):
-            return Text(sp[1], style=th.DIM)
-        if is_now:
-            return Text(g["now"], style=th.DIM)
-        return Text(g["dot"], style=th.FAINT)
 
 
 class LogPanel(Panel):

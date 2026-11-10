@@ -91,6 +91,7 @@ def _first_line(value, n=60) -> str:
 # question), as opposed to "Claude is done and idle". Assumed from Claude Code's docs.
 ATTENTION_TYPES = ("permission_prompt", "elicitation_dialog")
 ATTENTION_HINTS = ("needs your permission", "needs your approval", "needs your attention")
+IDLE_TYPE, IDLE_HINT = "idle_prompt", "waiting for your input"
 
 
 class Resolver:
@@ -204,7 +205,7 @@ def _hook_events(p: dict, r: Resolver) -> list[Event]:
                             "error_sig": f"{tool}:{text}" if err else ""}, **base)]
     if name == "PostToolUseFailure":
         if p.get("is_interrupt"):
-            return [Event(kind="notification", detail=f"interrupted · {tool}", **base)]
+            return [Event(kind="interrupt", detail=tool, **base)]
         text = _first_line(p.get("error"))
         return [Event(kind="tool_end", detail=tool_detail(tool, inp, cwd),
                       data={"tool": tool, "error": True, "error_text": text,
@@ -225,8 +226,9 @@ def _hook_events(p: dict, r: Resolver) -> list[Event]:
         message = str(p.get("message") or "")
         waiting = (p.get("notification_type") in ATTENTION_TYPES
                    or any(hint in message.lower() for hint in ATTENTION_HINTS))
+        idle = p.get("notification_type") == IDLE_TYPE or IDLE_HINT in message.lower()
         return [Event(kind="notification", detail=_first_line(message, 60),
-                      data={"attention": waiting}, **base)]
+                      data={"attention": waiting, "idle": idle and not waiting}, **base)]
     if name in ("PreCompact",):
         return [Event(kind="compact", **base)]
     if name in ("TaskCreated", "TaskCompleted"):

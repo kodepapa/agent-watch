@@ -13,7 +13,7 @@ from textual.widget import Widget
 
 from . import theme as th
 from .mux import Mux, MuxError, Screen, translate
-from .panels import Panel, badge
+from .panels import Panel, badge, fmt_span, strip
 
 FAST, SLOW = 0.04, 0.25                  # seconds between captures: while busy, while quiet
 
@@ -167,7 +167,8 @@ class TerminalView(Widget, can_focus=True):
 class SessionList(Panel):
     """Every hosted session with the state agentwatch knows for it. Click to switch."""
 
-    ROW_H = 2
+    ROW_H = 4                            # name, what it is doing, activity strip, gap
+    SPAN = 600                           # seconds covered by the activity strip
 
     def draw(self, w, h):
         app = self.app
@@ -181,17 +182,30 @@ class SessionList(Panel):
             color = th.agent_color(agent.name, agent.color) if agent else th.DIM
             left = Text(f"{i + 1} " if i < 9 else "  ", style=f"bold {th.INK}" if selected else th.FAINT)
             left.append(sess.name, style=f"bold {color}")
-            right = badge(agent) if agent else Text(sess.command or "-", style=th.FAINT)
+            if agent:
+                right = badge(agent)
+                if agent.since:
+                    right.append(" " + fmt_span(max(0, s.now() - agent.since)), style=th.DIM)
+            else:
+                right = Text("no events yet", style=th.FAINT)
             row = th.spread(left, right, inner)
-            what = (agent.current if agent and agent.state == "working" and agent.current else "") \
-                or th_home(sess.cwd)
-            detail = th.fit(Text("  " + what, style=th.DIM), inner)
+            busy = agent and (agent.state == "working" or agent.blocked) and agent.current
+            detail = th.fit(Text("  " + (agent.current if busy else th_home(sess.cwd)),
+                                 style=th.INK if busy else th.DIM), inner)
+            if agent:
+                trail = Text("  ") + strip(s, agent, inner - 2, self.SPAN)
+            else:
+                trail = Text("  " + (sess.command or ""), style=th.FAINT)
+            trail = th.fit(trail, inner)
             if selected:
-                row.stylize(f"on {th.SELECT}")
-                detail.stylize(f"on {th.SELECT}")
-            lines += [row, detail]
+                for line in (row, detail, trail):
+                    line.stylize(f"on {th.SELECT}")
+            lines += [row, detail, trail, Text("")]
         if not app.sessions:
             lines = [Text("none yet", style=th.DIM), Text(f"{app.prefix} then c", style=th.FAINT)]
+        elif len(lines) < h - 3:
+            lines += [Text("")] * (h - 3 - len(lines))
+            lines.append(Text(f"strip: last {fmt_span(self.SPAN)}", style=th.FAINT))
         title = Text("sessions", style=f"bold {th.INK}")
         waiting = sum(1 for a in by_term.values() if a.blocked)
         right = Text(f"{waiting} need you", style=f"bold {th.WARN}") if waiting else ""

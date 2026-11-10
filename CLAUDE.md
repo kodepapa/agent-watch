@@ -45,8 +45,16 @@ session transcripts (transcript_path) ────────┘        (LiveCo
 - Labels are lowercase. Palette lives in `theme.py` (slate background `#1c1f26`,
   warm ink `#d8d4c8`, lead amber, advisor straw, error red, ok green).
 - Timeline cells: block heights by tool calls per bucket (`▄▆█`), `▂` for
-  working stretches between calls (gaps under 25s), `▁` idle, `✕` error,
-  `◆` advisor, `✓` task done, `┃` task claimed, `▸` prompt.
+  working between calls, amber `▂` while the agent needs the user, `▁` idle,
+  `✕` error, `◆` advisor, `✓` task done, `┃` task claimed, `▸` prompt.
+- Timeline rules (`panels.activity`, shared by the timeline and the session
+  list strip). Keep them: cells are absolute time buckets, so marks never
+  slide within a cell; "fit" picks seconds-per-cell from fixed `STEPS`; a row
+  carries its state between marks (work from prompt/tool until stop/idle,
+  wait from `wait` until `go`) and paints the live state up to now; marks are
+  sorted before drawing because sources arrive out of order.
+- Claude Code sends no Stop when the user interrupts. `interrupt` events and
+  idle-prompt notifications end a stale "working" state.
 - Advisor "moments" are **inferred** (before plan, after error, mid-work,
   before done) and the panel says so. Claude Code doesn't report a reason.
 
@@ -135,7 +143,7 @@ resolved. Fix any of the three assumptions in `normalize.py` and add a test.
 
 ```sh
 uv sync --extra dev                               # uv only, no pip; uv.lock is committed
-uv run pytest                                     # 29 tests, ~15s; two need tmux
+uv run pytest                                     # 35 tests, ~15s; two need tmux
 uv run ruff check .                               # config in pyproject.toml; CI runs both
 uv run agentwatch demo                            # simulated session (sim.py)
 uv run agentwatch demo --at 0.58 --screenshot out.png --size 132x46

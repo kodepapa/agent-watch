@@ -87,9 +87,10 @@ many as you like and switch between them:
 | `ctrl+b` `q` | leave agentwatch; sessions keep running |
 | `ctrl+b` `ctrl+b` | send a real `ctrl+b` to Claude Code |
 
-The session list shows each session's state from its hooks: what it is running
-right now, idle, or `needs you` when Claude Code is stopped on a permission
-prompt or a question. On the dashboard, the number keys jump back to a session.
+The session list is the at-a-glance view. For every session it shows the state
+(working, idle, done, or `needs you` when Claude Code is stopped on a
+permission prompt or a question), how long it has been in that state, what it
+is running right now, and a strip of its last 10 minutes of activity. On the dashboard, the number keys jump back to a session.
 
 Sessions live in [tmux](https://github.com/tmux/tmux) behind the scenes, on a
 private tmux server that does not touch your own tmux setup. That is what keeps
@@ -257,7 +258,7 @@ Tested on Linux. macOS should work; Windows is untested.
 ```sh
 git clone https://github.com/kodepapa/agent-watch && cd agent-watch
 uv sync --extra dev
-uv run pytest                    # 29 tests, about 15s (two need tmux)
+uv run pytest                    # 35 tests, about 15s (two need tmux)
 uv run ruff check .
 uv run agentwatch demo --at 0.58 --screenshot docs/screenshot.png   # regenerate the screenshot
 uv run python scripts/make_gif.py docs/demo.gif                     # regenerate the GIF

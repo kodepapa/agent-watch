@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 
 LEAD = "lead"
 # Events that show an agent is moving again after a permission prompt or question.
-ANSWERED = {"tool_start", "tool_end", "prompt", "stop", "idle", "session_end"}
+ANSWERED = {"tool_start", "tool_end", "prompt", "stop", "idle", "session_end", "interrupt"}
 
 
 @dataclass
@@ -45,6 +45,7 @@ class Agent:
     current: str = ""
     last_ts: float = 0.0
     first_ts: float = 0.0
+    since: float = 0.0              # when the state shown on the badge last changed
     tool_calls: int = 0
     errors: int = 0
     last_error: bool = False
@@ -162,11 +163,21 @@ class State:
         if not self.first_ts or ev.ts < self.first_ts:
             self.first_ts = ev.ts
         self.last_ts = max(self.last_ts, ev.ts)
+        before = {name: (a.state, a.blocked) for name, a in self.agents.items()}
         if ev.kind in ANSWERED and ev.agent in self.agents:
             self.agents[ev.agent].hook_blocked = False
         handler = getattr(self, "_on_" + ev.kind, None)
         if handler:
             handler(ev)
+        for name, a in self.agents.items():
+            now = (a.state, a.blocked)
+            if before.get(name) != now:
+                a.since = ev.ts
+                was_blocked = before.get(name, ("", False))[1]
+                if now[1] and not was_blocked:
+                    self.mark(name, ev.ts, "wait")      # started waiting for the user
+                elif was_blocked and not now[1] and a.state == "working":
+                    self.mark(name, ev.ts, "go")        # answered: back to work
 
     def _touch(self, ev: Event) -> Agent:
         a = self.agent(ev.agent, ev.ts)
@@ -233,7 +244,17 @@ class State:
     def _on_session_end(self, ev: Event) -> None:
         a = self._touch(ev)
         a.state = "stopped"
+        a.current = "session ended"
+        self.mark(a.name, ev.ts, "stop")
         self.say(ev.ts, a.name, "session ended")
+
+    def _on_interrupt(self, ev: Event) -> None:
+        # The user pressed escape mid-tool. Claude Code sends no Stop for this.
+        a = self._touch(ev)
+        a.state = "idle"
+        a.current = "interrupted"
+        self.mark(a.name, ev.ts, "stop")
+        self.say(ev.ts, a.name, f"interrupted · {ev.detail}" if ev.detail else "interrupted", "warn")
 
     def _on_prompt(self, ev: Event) -> None:
         a = self._touch(ev)
@@ -301,6 +322,7 @@ class State:
             sub.state = "done"
             sub.current = "finished"
             sub.last_ts = ev.ts
+            self.mark(sub.name, ev.ts, "stop")
         self.say(ev.ts, name or parent.name, "subagent finished")
 
     def _on_idle(self, ev: Event) -> None:
@@ -320,6 +342,12 @@ class State:
         a = self._touch(ev)
         if ev.data.get("attention") and a.role != "subagent":
             a.hook_blocked = True
+        if ev.data.get("idle") and a.state == "working":
+            # Claude Code says it is waiting for input, so a turn ended without a Stop
+            # (an interrupt while thinking, for example).
+            a.state = "idle"
+            a.current = "waiting for input"
+            self.mark(a.name, ev.ts, "stop")
         self.say(ev.ts, a.name, ev.detail or "notification", "warn")
 
     def _on_compact(self, ev: Event) -> None:

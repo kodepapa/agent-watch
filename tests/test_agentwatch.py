@@ -185,3 +185,77 @@ def test_app_renders_at_tiny_size(demo_dirs):
         async with app.run_test(size=(60, 20)) as pilot:
             await pilot.pause(0.5)
     asyncio.run(go())
+
+
+# ---- timeline ---------------------------------------------------------------
+
+def kinds(cells):
+    """One letter per cell: the same priority the panel draws with."""
+    order = (("error", "E"), ("prompt", "P"), ("wait", "?"), ("tool", "T"), ("work", "w"),
+             ("stop", "_"), ("idle", "_"))
+    return "".join(next((letter for key, letter in order if c.get(key)), ".") for c in cells)
+
+
+def test_timeline_fills_long_work_and_stops_at_stop():
+    from agentwatch.panels import activity
+    marks = [(100, "prompt"), (110, "tool"), (300, "tool"), (310, "stop"), (400, "prompt")]
+    # 10s cells covering 100..500; the agent is working right now
+    assert kinds(activity(marks, 10, 10, 40, live="work")) == "PTwwwwwwwwwwwwwwwwwwT_........Pwwwwwwwww"
+    # same marks, agent no longer working: nothing is painted after the last mark
+    assert kinds(activity(marks, 10, 10, 40))[-10:] == "P" + "." * 9
+
+
+def test_timeline_cells_do_not_move_within_a_bucket():
+    from agentwatch.panels import activity
+    marks = [(1000.2, "tool"), (1003.9, "tool"), (1004.1, "error"), (1031, "stop")]
+    per, track = 4.0, 12
+
+    def at(now):
+        return kinds(activity(marks, int(now // per) - (track - 1), per, track))
+
+    assert at(1040.0) == at(1041.5) == at(1043.9)       # same bucket: an identical picture
+    assert at(1044.0) == at(1040.0)[1:] + "."           # next bucket: everything moves one cell
+    assert at(1040.0).count("T") == 1 and "E" in at(1040.0)
+
+
+def test_timeline_handles_marks_that_arrive_out_of_order_and_from_before_the_window():
+    from agentwatch.panels import activity
+    marks = [(250, "tool"), (40, "prompt"), (260, "stop")]     # the prompt predates the window
+    assert kinds(activity(marks, 20, 10, 10)) == "wwwwwT_..."
+
+
+def test_timeline_shows_waiting_for_the_user():
+    s = State()
+    s.apply(Event(ts=100, kind="tool_start", agent="api", detail="Bash rm -rf build"))
+    s.apply(Event(ts=105, kind="notification", agent="api", data={"attention": True}))
+    assert s.agents["api"].blocked and s.agents["api"].since == 105
+    from agentwatch.panels import activity, live_mode
+    assert live_mode(s.agents["api"]) == "wait"
+    assert kinds(activity(s.marks["api"], 10, 10, 6, "wait")) == "?" * 6
+    s.apply(Event(ts=140, kind="tool_end", agent="api", data={"error": False}))
+    assert not s.agents["api"].blocked and live_mode(s.agents["api"]) == "work"
+    assert kinds(activity(s.marks["api"], 10, 10, 6, "work")) == "????ww"
+
+
+def test_interrupt_and_idle_prompt_end_a_stale_working_state():
+    r, s = Resolver(), State()
+    base = {"session_id": "s1", "_ts": 1}
+    s.apply_all(hook_events({**base, "hook_event_name": "PreToolUse", "tool_name": "Bash"}, r))
+    s.apply_all(hook_events({**base, "_ts": 2, "hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+                             "is_interrupt": True}, r))
+    lead = s.agents["lead"]
+    assert (lead.state, lead.current, lead.errors) == ("idle", "interrupted", 0)
+    assert s.marks["lead"][-1] == (2, "stop")
+    s.apply_all(hook_events({**base, "_ts": 3, "hook_event_name": "UserPromptSubmit", "prompt": "go on"}, r))
+    assert lead.state == "working"
+    s.apply_all(hook_events({**base, "_ts": 70, "hook_event_name": "Notification",
+                             "message": "Claude is waiting for your input"}, r))
+    assert (lead.state, lead.since) == ("idle", 70)
+
+
+def test_subagent_and_session_end_leave_a_stop_on_the_timeline():
+    s = State()
+    s.apply(Event(ts=1, kind="subagent_start", agent="lead", data={"subagent": "explore"}))
+    s.apply(Event(ts=9, kind="subagent_stop", agent="lead", data={"subagent": "explore"}))
+    s.apply(Event(ts=12, kind="session_end", agent="lead"))
+    assert s.marks["explore"][-1] == (9, "stop") and s.marks["lead"][-1] == (12, "stop")
