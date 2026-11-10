@@ -86,6 +86,14 @@ Bundled font: JetBrains Mono (OFL, `agentwatch/fonts/`).
 The README images live in `docs/` (`screenshot.png`, `demo.gif`); regenerate
 them with the two commands above when the UI changes.
 
+## Releasing
+
+`Formula/agentwatch.rb` makes this repo its own Homebrew tap. It pins a source
+tarball by commit and its sha256, plus one `resource` per Python dependency
+(sdists from PyPI). On a release: bump `__version__`, then update `url`,
+`version` and `sha256` in the formula to the new commit or tag tarball, and
+refresh the resources if dependencies changed (`brew update-python-resources`).
+
 ## Known gaps and ideas (not started)
 
 - Phase bar (plan > spawn > claim > work > merge > review > ship) was left out

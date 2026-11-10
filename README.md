@@ -44,7 +44,15 @@ pipx install "git+https://github.com/kodepapa/agent-watch"
 agentwatch demo
 ```
 
-`pip install` works too. For PNG export, install the `screenshots` extra:
+Or with Homebrew (macOS and Linux):
+
+```sh
+brew tap kodepapa/agent-watch https://github.com/kodepapa/agent-watch
+brew install kodepapa/agent-watch/agentwatch
+```
+
+`pip install` works too. For PNG export, install the `screenshots` extra (not
+included in the Homebrew build):
 `pipx install "agentwatch[screenshots] @ git+https://github.com/kodepapa/agent-watch"`.
 
 ## Watch your own sessions
