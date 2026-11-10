@@ -1,0 +1,277 @@
+"""agentwatch command line."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import tempfile
+import threading
+import time
+
+HOME = os.path.expanduser("~")
+DEFAULT_EVENTS = os.environ.get("AGENTWATCH_EVENTS") or os.path.join(HOME, ".agentwatch", "events.jsonl")
+DEFAULT_CLAUDE = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
+EMIT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hooks", "emit.py")
+HOOK_EVENTS = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+               "PostToolUseFailure", "SubagentStart", "SubagentStop", "Stop", "Notification",
+               "PreCompact", "TeammateIdle", "TaskCreated", "TaskCompleted"]
+TOOL_EVENTS = {"PreToolUse", "PostToolUse", "PostToolUseFailure"}
+
+
+def parse_duration(value: str) -> float:
+    value = value.strip().lower()
+    mult = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if value and value[-1] in mult:
+        return float(value[:-1]) * mult[value[-1]]
+    return float(value)
+
+
+# ---- hooks -----------------------------------------------------------------
+
+def hook_command() -> str:
+    return f'"{sys.executable}" "{EMIT}"'
+
+
+def _load_settings(path: str) -> dict:
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        text = f.read().strip()
+    return json.loads(text) if text else {}
+
+
+def install_hooks(args) -> int:
+    path = args.settings
+    settings = _load_settings(path)
+    hooks = settings.setdefault("hooks", {})
+    added = []
+    for event in args.events or HOOK_EVENTS:
+        groups = hooks.setdefault(event, [])
+        if any("emit.py" in h.get("command", "") and "agentwatch" in h.get("command", "")
+               for g in groups for h in g.get("hooks", [])):
+            continue
+        entry = {"hooks": [{"type": "command", "command": hook_command(), "timeout": 5, "async": True}]}
+        if event in TOOL_EVENTS:
+            entry["matcher"] = "*"
+        groups.append(entry)
+        added.append(event)
+    if args.dry_run:
+        print(json.dumps({"hooks": {e: hooks[e] for e in (args.events or HOOK_EVENTS)}}, indent=2))
+        return 0
+    if not added:
+        print(f"agentwatch hooks are already installed in {path}")
+        return 0
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path):
+        backup = f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+        shutil.copy2(path, backup)
+        print(f"backed up {path} to {backup}")
+    with open(path, "w") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    print(f"added agentwatch hooks for {len(added)} events to {path}")
+    print("restart running claude sessions so they pick up the hooks, then run: agentwatch")
+    return 0
+
+
+def uninstall_hooks(args) -> int:
+    path = args.settings
+    settings = _load_settings(path)
+    hooks = settings.get("hooks", {})
+    removed = 0
+    for event in list(hooks):
+        kept = []
+        for g in hooks[event]:
+            inner = [h for h in g.get("hooks", []) if not ("emit.py" in h.get("command", "")
+                                                          and "agentwatch" in h.get("command", ""))]
+            removed += len(g.get("hooks", [])) - len(inner)
+            if inner:
+                kept.append({**g, "hooks": inner})
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+    if not hooks:
+        settings.pop("hooks", None)
+    shutil.copy2(path, f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+    with open(path, "w") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    print(f"removed {removed} agentwatch hook entries from {path}")
+    return 0
+
+
+# ---- doctor ------------------------------------------------------------------
+
+def doctor(args) -> int:
+    from .model import State
+    from .sources import LiveCollector
+
+    print(f"events file   {args.events}")
+    if not os.path.exists(args.events):
+        print("              missing: run `agentwatch install-hooks`, then start claude")
+    else:
+        size = os.path.getsize(args.events)
+        print(f"              {size:,} bytes")
+    print(f"claude dir    {args.claude_dir}")
+    col = LiveCollector(args.events, args.claude_dir, since=parse_duration(args.since))
+    events = col.poll()
+    state = State()
+    state.apply_all(events)
+    print(f"teams         {', '.join(col.teams()) or 'none found'}")
+    print(f"active team   {col.team or '-'}")
+    print(f"transcripts   {len(col.transcripts)} followed")
+    print(f"events        {len(events)} normalized from the last {args.since}")
+    print()
+    print("hook payload keys seen (last sample per event):")
+    if not col.raw_samples:
+        print("  none yet")
+    for name, p in sorted(col.raw_samples.items()):
+        keys = sorted(k for k in p if not k.startswith("_"))
+        print(f"  {name:<20} {', '.join(keys)}")
+        if p.get("_env"):
+            print(f"  {'':<20} env: {', '.join(sorted(p['_env']))}")
+    print()
+    print("agents as resolved:")
+    for a in state.ordered_agents():
+        print(f"  {a.name:<14} role={a.role:<9} model={a.model or '-':<12} calls={a.tool_calls:<4} "
+              f"tokens={a.tokens_read}")
+    print(f"tasks         {len(state.tasks)}  advisor calls {len(state.advisor_calls)}")
+    unnamed = [a.name for a in state.agents.values() if a.name.startswith("session-")]
+    if unnamed:
+        print()
+        print("some sessions have no agent name. Check the payload keys above for the field that")
+        print("carries the teammate name and add it to NAME_KEYS in agentwatch/normalize.py.")
+    return 0
+
+
+# ---- running the app -----------------------------------------------------------
+
+def _run(app, args) -> int:
+    if getattr(args, "screenshot", ""):
+        from .shot import screenshot
+        w, h = (int(x) for x in args.size.lower().split("x"))
+        print(screenshot(app, args.screenshot, size=(w, h), title=args.title))
+        return 0
+    app.run()
+    return 0
+
+
+def _glyphs(args) -> None:
+    if getattr(args, "ascii", False):
+        from . import theme
+        theme.use_ascii(True)
+
+
+def watch(args) -> int:
+    _glyphs(args)
+    from .app import AgentWatchApp
+    from .sources import LiveCollector
+
+    col = LiveCollector(args.events, args.claude_dir, team=args.team,
+                        since=parse_duration(args.since), record_path=args.record)
+    app = AgentWatchApp(col, mode="live", advisor_model=args.advisor_model, events_hint=args.events)
+    return _run(app, args)
+
+
+def demo(args) -> int:
+    _glyphs(args)
+    from .app import AgentWatchApp
+    from .sim import DemoSession
+    from .sources import LiveCollector
+
+    root = tempfile.mkdtemp(prefix="agentwatch-demo-")
+    claude_dir = os.path.join(root, "claude")
+    events = os.path.join(root, "events.jsonl")
+    sim = DemoSession(claude_dir, events, seed=args.seed)
+    stop = threading.Event()
+    if args.at is not None:
+        sim.generate(until=sim.duration * args.at)
+    else:
+        sim.run_live(speed=args.speed, stop=stop)
+    col = LiveCollector(events, claude_dir, since=86400)
+    app = AgentWatchApp(col, mode="demo", advisor_model=args.advisor_model or "opus 5.5",
+                        events_hint=events)
+    try:
+        return _run(app, args)
+    finally:
+        stop.set()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def replay(args) -> int:
+    _glyphs(args)
+    from .app import AgentWatchApp
+    from .sources import ReplayCollector
+
+    col = ReplayCollector(args.file, speed=args.speed)
+    if args.at is not None and col.events:
+        col.virtual = col.events[0].ts + (col.events[-1].ts - col.events[0].ts) * args.at
+    app = AgentWatchApp(col, mode="replay", advisor_model=args.advisor_model, events_hint=args.file)
+    return _run(app, args)
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(prog="agentwatch",
+                                description="Live terminal dashboard for Claude Code sessions and agent teams.")
+    sub = p.add_subparsers(dest="cmd")
+
+    def common(sp, live=True):
+        sp.add_argument("--advisor-model", default="", help="label for the advisor model, e.g. 'opus 5.5'")
+        sp.add_argument("--screenshot", default="", help="render one frame to .png or .svg and exit")
+        sp.add_argument("--size", default="132x46", help="screenshot size in cells, e.g. 132x46")
+        sp.add_argument("--title", default="agentwatch", help="screenshot window title")
+        sp.add_argument("--ascii", action="store_true", default=bool(os.environ.get("AGENTWATCH_ASCII")),
+                        help="plain ASCII boxes for terminals without box-drawing fonts")
+        if live:
+            sp.add_argument("--events", default=DEFAULT_EVENTS)
+            sp.add_argument("--claude-dir", default=DEFAULT_CLAUDE)
+
+    w = sub.add_parser("watch", help="watch live sessions (default)")
+    common(w)
+    w.add_argument("--team", default="", help="pin a team name (default: most recent)")
+    w.add_argument("--since", default="2h", help="history to load on start, e.g. 30m, 2h")
+    w.add_argument("--record", default="", help="also write normalized events to this file")
+
+    d = sub.add_parser("demo", help="run a simulated agent team session")
+    common(d, live=False)
+    d.add_argument("--speed", type=float, default=2.0)
+    d.add_argument("--seed", type=int, default=7)
+    d.add_argument("--at", type=float, default=None, help="jump to a point, 0..1, and freeze")
+
+    r = sub.add_parser("replay", help="replay a file made with watch --record")
+    common(r, live=False)
+    r.add_argument("file")
+    r.add_argument("--speed", type=float, default=4.0)
+    r.add_argument("--at", type=float, default=None, help="start at a point, 0..1")
+
+    for name, fn, helptext in (("install-hooks", install_hooks, "add agentwatch hooks to Claude Code settings"),
+                               ("uninstall-hooks", uninstall_hooks, "remove agentwatch hooks")):
+        sp = sub.add_parser(name, help=helptext)
+        sp.add_argument("--settings", default=os.path.join(DEFAULT_CLAUDE, "settings.json"))
+        if name == "install-hooks":
+            sp.add_argument("--dry-run", action="store_true", help="print the hooks JSON instead of writing")
+            sp.add_argument("--events", nargs="*", help="only these hook events")
+        sp.set_defaults(fn=fn)
+
+    doc = sub.add_parser("doctor", help="show what agentwatch can see and how it maps it")
+    doc.add_argument("--events", default=DEFAULT_EVENTS)
+    doc.add_argument("--claude-dir", default=DEFAULT_CLAUDE)
+    doc.add_argument("--since", default="2h")
+
+    w.set_defaults(fn=watch)
+    d.set_defaults(fn=demo)
+    r.set_defaults(fn=replay)
+    doc.set_defaults(fn=doctor)
+
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or (argv[0] not in sub.choices and argv[0] not in ("-h", "--help")):
+        argv = ["watch"] + argv
+    args = p.parse_args(argv)
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
