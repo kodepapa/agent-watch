@@ -54,6 +54,10 @@ class Agent:
     context_tokens: int = 0
     calls_since_prompt: int = 0
     subagents_running: int = 0
+    session: str = ""
+    pane: str = ""                  # herdr pane id, when the session runs inside herdr
+    workspace: str = ""             # herdr workspace label
+    blocked: bool = False           # herdr sees an approval or question waiting
 
 
 @dataclass
@@ -99,6 +103,8 @@ class State:
         self.last_ts = 0.0
         self.events_total = 0
         self.errors_total = 0
+        self.herdr_connected = False
+        self.herdr_agents: list[dict] = []
         self._recent_task_logs: dict[tuple, float] = {}
 
     # ---- helpers -------------------------------------------------------
@@ -129,6 +135,10 @@ class State:
     def teammates(self) -> list[Agent]:
         return [a for a in self.ordered_agents() if a.role != LEAD]
 
+    def jump_targets(self) -> list[Agent]:
+        """Agents whose herdr pane can be focused with the number keys."""
+        return [a for a in self.ordered_agents() if a.pane and a.role != "subagent"][:9]
+
     def task_counts(self) -> tuple[int, int]:
         done = sum(1 for t in self.tasks.values() if t.status == "completed")
         return done, len(self.tasks)
@@ -152,7 +162,40 @@ class State:
         if not a.first_ts:
             a.first_ts = ev.ts
         a.last_ts = max(a.last_ts, ev.ts)
+        if ev.session and not a.session:
+            a.session = ev.session
+            if self.herdr_agents:
+                self._sync_herdr(ev.ts)
         return a
+
+    # ---- herdr ---------------------------------------------------------
+    def _on_herdr_pane(self, ev: Event) -> None:
+        a = self.agent(ev.agent, ev.ts)
+        a.pane = ev.data.get("pane_id", "") or a.pane
+        self._sync_herdr(ev.ts)
+
+    def _on_herdr(self, ev: Event) -> None:
+        self.herdr_connected = bool(ev.data.get("connected"))
+        self.herdr_agents = list(ev.data.get("agents") or [])
+        self._sync_herdr(ev.ts)
+
+    def _sync_herdr(self, ts: float) -> None:
+        by_pane = {h["pane_id"]: h for h in self.herdr_agents}
+        by_session = {h["session"]: h for h in self.herdr_agents if h.get("session")}
+        for a in self.agents.values():
+            info = by_pane.get(a.pane) or (by_session.get(a.session) if a.session else None)
+            if not info:
+                a.blocked = False
+                continue
+            if a.role == "subagent":        # shares its parent's pane; the parent carries the status
+                a.pane = a.pane or info["pane_id"]
+                continue
+            a.pane = a.pane or info["pane_id"]
+            a.workspace = info.get("workspace", "")
+            blocked = info.get("status") == "blocked"
+            if blocked and not a.blocked:
+                self.say(ts, a.name, f"needs you · waiting in herdr pane {a.pane}", "warn")
+            a.blocked = blocked
 
     def _on_team(self, ev: Event) -> None:
         self.team = ev.data.get("team", self.team)

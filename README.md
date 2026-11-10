@@ -81,6 +81,48 @@ exits. It runs as an async hook, uses only the standard library, trims long
 fields to 400 characters, and never returns an error to Claude Code.
 Everything stays on your machine: agentwatch makes no network calls.
 
+## Use it inside herdr
+
+[herdr](https://herdr.dev) is a terminal multiplexer for coding agents. If you
+run your Claude Code sessions in herdr panes, agentwatch connects to herdr's
+local socket on its own and adds three things:
+
+- **Who needs you.** herdr detects when an agent is stuck on an approval or a
+  question. agentwatch shows that agent as `needs you`, logs it, and counts it
+  in the status bar. Hooks alone cannot tell you this.
+- **Jump to the agent.** Each agent shows its herdr pane id and a number.
+  Press `1`-`9` to focus that pane in herdr.
+- **Open as a herdr pane.** The repo is also a herdr plugin, so the dashboard
+  opens as a tab, a split or a popup from a key.
+
+```sh
+uv tool install git+https://github.com/kodepapa/agent-watch   # the plugin runs the `agentwatch` command
+agentwatch install-hooks
+herdr plugin install kodepapa/agent-watch
+```
+
+Then bind a key in your herdr config:
+
+```toml
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "kodepapa.agentwatch.popup"    # or .open (tab) or .side (split)
+description = "agentwatch"
+```
+
+Opened as a popup, agentwatch works as a switcher: press the key, see the
+whole team, press a number, and you are in that agent's pane with the popup
+closed. As a tab or split it stays open after a jump.
+
+How sessions are matched to panes: the hook records the `HERDR_PANE_ID` that
+herdr sets in every pane, and herdr's own Claude integration
+(`herdr integration install claude`) reports session ids as a second route.
+Restart Claude sessions after installing the hooks. `agentwatch doctor` lists
+every agent herdr sees and which session it was matched to, and `--no-herdr`
+turns the connection off. Subagents share their parent's pane, so they have no
+jump key of their own.
+
 ### Terminal fonts
 
 Boxes, bars and the timeline use Unicode box-drawing and block characters,
@@ -90,7 +132,7 @@ pass `--ascii` (or set `AGENTWATCH_ASCII=1`) for plain ASCII.
 ## Keys
 
 `q` quit, `p` pause, `t` switch team, `w` timeline window (fit, 2m, 10m, 30m, 2h),
-`+` / `-` replay speed.
+`+` / `-` replay speed, `1`-`9` jump to an agent's pane (inside herdr).
 
 ## Commands
 
@@ -99,7 +141,8 @@ pass `--ascii` (or set `AGENTWATCH_ASCII=1`) for plain ASCII.
 | `agentwatch` | live monitor (`--team`, `--since 30m`, `--record file.jsonl`, `--advisor-model "opus 5.5"`) |
 | `agentwatch demo` | simulated session (`--speed 4`, `--at 0.6` to freeze at 60%) |
 | `agentwatch replay file.jsonl` | play back a recording (`--speed`, `--at`) |
-| `agentwatch doctor` | show raw hook keys, resolved agents, teams, tasks and advisor calls |
+| `agentwatch doctor` | show raw hook keys, resolved agents, teams, tasks, advisor calls and herdr panes |
+| `agentwatch herdr open` | open the dashboard in a herdr pane (`--placement tab`, `split`, `popup`) |
 | `... --screenshot out.png` | render one frame to PNG or SVG and exit (`--size 132x46`) |
 
 ## Where each panel's data comes from
@@ -111,6 +154,7 @@ pass `--ascii` (or set `AGENTWATCH_ASCII=1`) for plain ASCII.
 | team members and models | `~/.claude/teams/<team>/config.json` |
 | advisor calls and advice | `server_tool_use` blocks named `advisor` in the session transcript |
 | tokens read, context size, model | `usage` and `model` on assistant messages in the transcript |
+| `needs you`, pane ids, jump keys | herdr's socket API (`agent.list`, `agent.focus`) and `HERDR_PANE_ID` in the hook |
 
 Advisor "moments" (before plan, after error, mid-work, before done) are
 inferred from what the agent was doing when it called the advisor. Claude Code
@@ -141,6 +185,7 @@ whether any of the above needs adjusting.
 ```
 agentwatch/
   hooks/emit.py   hook script Claude Code runs
+  herdr.py        herdr socket client: panes, blocked agents, focus
   normalize.py    raw payloads, team/task files, transcripts -> Events
   sources.py      live collector (tails files) and replay collector
   model.py        Event and the State reducer
@@ -154,7 +199,9 @@ agentwatch/
 
 agentwatch is alpha (0.1.0). It is developed and tested against a simulated
 session; the three assumptions listed above have not yet been confirmed against
-a real agent-team run. If a panel looks wrong on your sessions, the output of
+a real agent-team run. The herdr integration is written against herdr's
+published API schema (protocol 22, herdr 0.9.5) and tested with a stand-in
+server, not yet against a live herdr. If a panel looks wrong on your sessions, the output of
 `agentwatch doctor` in an issue is the most useful thing you can send.
 
 Tested on Linux. macOS should work; Windows is untested.
@@ -164,7 +211,7 @@ Tested on Linux. macOS should work; Windows is untested.
 ```sh
 git clone https://github.com/kodepapa/agent-watch && cd agent-watch
 uv sync --extra dev
-uv run pytest                    # 11 tests, about 10s
+uv run pytest                    # 22 tests, about 10s
 uv run ruff check .
 uv run agentwatch demo --at 0.58 --screenshot docs/screenshot.png   # regenerate the screenshot
 uv run python scripts/make_gif.py docs/demo.gif                     # regenerate the GIF

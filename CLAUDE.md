@@ -48,6 +48,36 @@ session transcripts (transcript_path) ────────┘        (LiveCo
 - Advisor "moments" are **inferred** (before plan, after error, mid-work,
   before done) and the panel says so. Claude Code doesn't report a reason.
 
+## herdr integration
+
+herdr (https://herdr.dev, source github.com/herdrdev/herdr) is the user's
+terminal multiplexer for parallel agent sessions. Integration points:
+
+- `hooks/emit.py` adds `_herdr` (pane, tab, workspace ids from the `HERDR_*`
+  env vars herdr sets in every pane) to each event. `normalize.hook_events`
+  turns that into a `herdr_pane` event, once per agent.
+- `herdr.py` is the socket client (newline-delimited JSON over a Unix socket,
+  path from `HERDR_SOCKET_PATH`, `HERDR_SESSION`, or `~/.config/herdr/herdr.sock`).
+  `HerdrWatcher` polls `agent.list` + `workspace.list` on a thread; the
+  collector emits a `herdr` event when the snapshot changes. So herdr data
+  still flows through Events and State like every other source.
+- `State._sync_herdr` matches herdr agents to ours by pane id, else by Claude
+  session id (herdr's `agent_session`, an id or a transcript path), and sets
+  `Agent.pane`, `.workspace`, `.blocked`.
+- UI: `needs you` badge, pane id + jump number (`panels.pane_tag`), keys `1`-`9`
+  call `agent.focus` (fallback `pane.focus`). When opened as a popup or overlay
+  (`AGENTWATCH_HERDR_PLACEMENT`), the app exits after a jump.
+- `herdr-plugin.toml` at the repo root makes the repo a herdr plugin
+  (`herdr plugin install kodepapa/agent-watch`). Its actions run
+  `agentwatch herdr open --placement ...`, which calls `plugin.pane.open`.
+
+herdr field names come from its published schema
+(`docs/next/api/herdr-api.schema.json`, protocol 22), so they live in
+`herdr.py`, not `normalize.py`. Not yet run against a live herdr: tests use
+the stand-in server in `tests/test_herdr.py`. Unverified in particular: that
+focus lands on the target pane after a popup closes, and the manifest
+validating under `herdr plugin install`.
+
 ## Verified vs assumed
 
 Verified against Claude Code docs: hook event names (SessionStart, SessionEnd,
@@ -71,7 +101,7 @@ resolved. Fix any of the three assumptions in `normalize.py` and add a test.
 
 ```sh
 uv sync --extra dev                               # uv only, no pip; uv.lock is committed
-uv run pytest                                     # 11 tests, ~10s
+uv run pytest                                     # 22 tests, ~10s
 uv run ruff check .                               # config in pyproject.toml; CI runs both
 uv run agentwatch demo                            # simulated session (sim.py)
 uv run agentwatch demo --at 0.58 --screenshot out.png --size 132x46

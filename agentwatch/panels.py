@@ -31,8 +31,21 @@ def badge(a: Agent) -> Text:
                              "stopped": th.FAINT, "waiting": th.FAINT}.get(a.state, th.DIM)
     if a.last_error and a.state == "working":
         state, color = "error", th.ERROR
+    if a.blocked:                       # herdr sees an approval or question on screen
+        state, color = "needs you", th.WARN
     t = Text(th.G["status"] + " ", style=color)
-    t.append(state, style=f"bold {color}" if state in ("working", "error") else color)
+    t.append(state, style=f"bold {color}" if state in ("working", "error", "needs you") else color)
+    return t
+
+
+def pane_tag(s: State, a: Agent) -> Text:
+    """Jump key and herdr pane id for an agent, empty when it has no pane."""
+    t = Text()
+    targets = s.jump_targets()
+    if a in targets:
+        t.append(f"{targets.index(a) + 1} ", style=f"bold {th.INK}")
+    if a.pane:
+        t.append(a.pane, style=th.DIM)
     return t
 
 
@@ -64,6 +77,8 @@ class HeaderBar(Panel):
         mode = self.app.mode_label
         left.append("   ")
         left.append(mode, style=f"bold {th.WARN if mode == 'paused' else th.OK}")
+        if s.herdr_connected:
+            left.append("   herdr", style=th.DIM)
         right = Text(clock(s.now()), style=th.DIM)
         legend = Text()
         names = [a.name for a in s.ordered_agents()]
@@ -186,6 +201,8 @@ class LeadPanel(Panel):
                 ("subagents ", str(lead.subagents_running), th.INK)):
             l2.append(label, style=th.DIM)
             l2.append(value + "    ", style=style)
+        if lead.pane:
+            l2 = th.spread(l2, pane_tag(s, lead), inner)
         right = Text(lead.model or "model unknown", style=th.LEAD if lead.model else th.DIM)
         return th.box(w, h, title, [l1, l2], border=th.LEAD, heavy=True, right=right)
 
@@ -347,7 +364,7 @@ class TeamPanel(Panel):
             stats = Text(f"+{more} more agents", style=th.WARN)
         since = th.ago(s.now() - a.last_ts).replace(" ago", "") if a.last_ts else ""
         l4 = th.spread(stats, Text(since, style=th.FAINT), inner)
-        right = Text("sub", style=th.DIM) if a.role == "subagent" else ""
+        right = Text("sub", style=th.DIM) if a.role == "subagent" else pane_tag(s, a)
         return th.box(w, self.CARD_H, Text(a.name, style=f"bold {color}"), [l1, l2, l3, l4],
                       border=color, right=right)
 
@@ -534,7 +551,14 @@ class StatusBar(Panel):
         n = len(s.advisor_calls)
         seg("advisor", f"{n} call" + ("" if n == 1 else "s"), th.ADVISOR)
         seg("errors", str(s.errors_total), th.ERROR if s.errors_total else th.INK)
-        keys = Text("q quit  p pause  t team  w window", style=th.FAINT)
-        if len(t.plain.rstrip()) + len(keys.plain) + 2 > w:
-            return [th.fit(t, w)]
-        return [th.spread(t, keys, w)]
+        blocked = sum(1 for a in s.agents.values() if a.blocked)
+        if blocked:
+            seg("needs you", str(blocked), th.WARN)
+        full = "q quit  p pause  t team  w window"
+        options = [full]
+        if s.jump_targets() and self.app.herdr:
+            options = ["1-9 jump  " + full, "1-9 jump  q quit"]
+        for keys in options:
+            if len(t.plain.rstrip()) + len(keys) + 2 <= w:
+                return [th.spread(t, Text(keys, style=th.FAINT), w)]
+        return [th.fit(t, w)]

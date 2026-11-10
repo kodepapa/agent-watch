@@ -7,6 +7,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 
 from . import theme as th
+from .herdr import HerdrError
 from .model import State
 from .panels import (
     WINDOWS,
@@ -42,12 +43,15 @@ class AgentWatchApp(App):
     """
     BINDINGS = [("q", "quit", "quit"), ("p", "toggle_pause", "pause"),
                 ("t", "next_team", "team"), ("w", "zoom", "window"),
-                ("plus,equals_sign", "faster", "faster"), ("minus", "slower", "slower")]
+                ("plus,equals_sign", "faster", "faster"), ("minus", "slower", "slower"),
+                *[(str(n), f"jump({n})", f"jump {n}") for n in range(1, 10)]]
 
     def __init__(self, collector, mode: str = "live", advisor_model: str = "",
-                 tick: float = 0.25, events_hint: str = ""):
+                 tick: float = 0.25, events_hint: str = "", herdr=None, leave_after_jump: bool = False):
         super().__init__()
         self.collector = collector
+        self.herdr = herdr                       # herdr.Herdr client, or None outside herdr
+        self.leave_after_jump = leave_after_jump
         self.mode = mode
         self.advisor_model = advisor_model
         self.tick_s = tick
@@ -139,6 +143,24 @@ class AgentWatchApp(App):
         self.collector.reset(nxt)
         self.state = self._new_state()
         self.notify(f"watching team {nxt}", timeout=2)
+
+    def action_jump(self, n: int) -> None:
+        """Focus the herdr pane of the nth agent (the number shown next to its pane id)."""
+        targets = self.state.jump_targets()
+        if not self.herdr or n > len(targets):
+            return
+        agent = targets[n - 1]
+        self.run_worker(lambda: self._jump(agent.name, agent.pane), thread=True, exclusive=True)
+
+    def _jump(self, name: str, pane: str) -> None:
+        try:
+            self.herdr.focus(pane)
+        except HerdrError as e:
+            self.call_from_thread(self.notify, f"could not focus {name} in {pane}: {e}",
+                                  severity="warning", timeout=4)
+            return
+        if self.leave_after_jump:
+            self.call_from_thread(self.exit)
 
     def action_faster(self) -> None:
         if hasattr(self.collector, "speed"):

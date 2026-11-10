@@ -94,6 +94,7 @@ class Resolver:
         self.session_names: dict[str, str] = {}
         self.agent_ids: dict[str, str] = {}      # agent_id -> display name
         self.lead_session = ""
+        self.panes: dict[str, str] = {}          # display name -> herdr pane id
         self._type_counts: dict[str, int] = {}
 
     def learn_member(self, agent_id: str, name: str) -> None:
@@ -145,6 +146,19 @@ class Resolver:
 
 def hook_events(p: dict, r: Resolver) -> list[Event]:
     """One raw hook payload -> zero or more Events."""
+    events = _hook_events(p, r)
+    pane = (p.get("_herdr") or {}).get("pane_id")
+    if pane and events:
+        # The hook saw herdr's pane id in its environment: tell the model once per agent.
+        for agent in dict.fromkeys(ev.agent for ev in events):
+            if r.panes.get(agent) != pane:
+                r.panes[agent] = pane
+                events.append(Event(ts=events[0].ts, kind="herdr_pane", agent=agent,
+                                    session=events[0].session, data={"pane_id": pane}))
+    return events
+
+
+def _hook_events(p: dict, r: Resolver) -> list[Event]:
     name = p.get("hook_event_name", "")
     ts = float(p.get("_ts") or 0) or 0.0
     session = p.get("session_id", "")

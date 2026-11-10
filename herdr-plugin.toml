@@ -1,0 +1,33 @@
+# herdr plugin: open the agentwatch dashboard inside herdr.
+#   herdr plugin install kodepapa/agent-watch
+# Needs the `agentwatch` command on PATH (uv tool install, or brew).
+id = "kodepapa.agentwatch"
+name = "agentwatch"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Live dashboard for Claude Code sessions and agent teams: tasks, timeline, advisor calls, who needs you"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "dashboard"
+title = "agentwatch"
+placement = "tab"
+command = ["agentwatch"]
+
+[[actions]]
+id = "open"
+title = "Open agentwatch in a tab"
+contexts = ["global"]
+command = ["agentwatch", "herdr", "open", "--placement", "tab"]
+
+[[actions]]
+id = "popup"
+title = "Open agentwatch as a popup"
+contexts = ["global"]
+command = ["agentwatch", "herdr", "open", "--placement", "popup"]
+
+[[actions]]
+id = "side"
+title = "Open agentwatch in a split"
+contexts = ["global"]
+command = ["agentwatch", "herdr", "open", "--placement", "split"]

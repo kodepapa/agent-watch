@@ -147,12 +147,38 @@ def doctor(args) -> int:
         print(f"  {a.name:<14} role={a.role:<9} model={a.model or '-':<12} calls={a.tool_calls:<4} "
               f"tokens={a.tokens_read}")
     print(f"tasks         {len(state.tasks)}  advisor calls {len(state.advisor_calls)}")
+    _doctor_herdr(state)
     unnamed = [a.name for a in state.agents.values() if a.name.startswith("session-")]
     if unnamed:
         print()
         print("some sessions have no agent name. Check the payload keys above for the field that")
         print("carries the teammate name and add it to NAME_KEYS in agentwatch/normalize.py.")
     return 0
+
+
+def _doctor_herdr(state) -> None:
+    from .herdr import Herdr, HerdrError
+    from .model import Event
+
+    client = Herdr()
+    print()
+    if not client.available():
+        print(f"herdr         no server socket at {client.path}")
+        return
+    try:
+        pong = client.call("ping")
+        snap = client.snapshot()
+    except HerdrError as e:
+        print(f"herdr         socket {client.path} did not answer: {e}")
+        return
+    print(f"herdr         {pong.get('version', '?')} (protocol {pong.get('protocol', '?')}) on {client.path}")
+    state.apply(Event(ts=time.time(), kind="herdr", data=snap))
+    matched = {a.pane: a.name for a in state.agents.values() if a.pane and a.role != "subagent"}
+    for h in snap["agents"]:
+        who = matched.get(h["pane_id"], "not matched to a session agentwatch has seen")
+        print(f"  {h['pane_id']:<10} {h['kind'] or '?':<8} {h['status']:<8} {h['workspace'] or '-':<14} {who}")
+    if not snap["agents"]:
+        print("  herdr reports no agents")
 
 
 # ---- running the app -----------------------------------------------------------
@@ -178,10 +204,46 @@ def watch(args) -> int:
     from .app import AgentWatchApp
     from .sources import LiveCollector
 
+    client = None if args.no_herdr else _herdr_client()
+    watcher = None
+    if client:
+        from .herdr import TRANSIENT, HerdrWatcher
+        watcher = HerdrWatcher(client)
+        watcher.poll_once()
+        watcher.start()
     col = LiveCollector(args.events, args.claude_dir, team=args.team,
-                        since=parse_duration(args.since), record_path=args.record)
-    app = AgentWatchApp(col, mode="live", advisor_model=args.advisor_model, events_hint=args.events)
-    return _run(app, args)
+                        since=parse_duration(args.since), record_path=args.record, herdr=watcher)
+    app = AgentWatchApp(col, mode="live", advisor_model=args.advisor_model, events_hint=args.events,
+                        herdr=client,
+                        leave_after_jump=bool(client) and os.environ.get("AGENTWATCH_HERDR_PLACEMENT") in TRANSIENT)
+    try:
+        return _run(app, args)
+    finally:
+        if watcher:
+            watcher.stop()
+
+
+def _herdr_client():
+    """A herdr client when a herdr server socket exists, else None."""
+    from .herdr import Herdr
+    client = Herdr()
+    return client if client.available() else None
+
+
+def herdr_open(args) -> int:
+    from .herdr import PLUGIN_ID, Herdr, HerdrError
+    client = Herdr()
+    try:
+        client.open_dashboard(args.placement)
+    except HerdrError as e:
+        print(f"could not open agentwatch in herdr: {e}", file=sys.stderr)
+        if e.code == "unreachable":
+            print(f"no herdr server answered on {client.path}", file=sys.stderr)
+        else:
+            print(f"is the plugin installed? run: herdr plugin install kodepapa/agent-watch  (id {PLUGIN_ID})",
+                  file=sys.stderr)
+        return 1
+    return 0
 
 
 def demo(args) -> int:
@@ -243,6 +305,7 @@ def main(argv=None) -> int:
     w.add_argument("--team", default="", help="pin a team name (default: most recent)")
     w.add_argument("--since", default="2h", help="history to load on start, e.g. 30m, 2h")
     w.add_argument("--record", default="", help="also write normalized events to this file")
+    w.add_argument("--no-herdr", action="store_true", help="do not talk to a running herdr server")
 
     d = sub.add_parser("demo", help="run a simulated agent team session")
     common(d, live=False)
@@ -269,6 +332,12 @@ def main(argv=None) -> int:
     doc.add_argument("--events", default=DEFAULT_EVENTS)
     doc.add_argument("--claude-dir", default=DEFAULT_CLAUDE)
     doc.add_argument("--since", default="2h")
+
+    h = sub.add_parser("herdr", help="herdr integration")
+    hsub = h.add_subparsers(dest="herdr_cmd", required=True)
+    ho = hsub.add_parser("open", help="open agentwatch in a herdr pane (needs the herdr plugin)")
+    ho.add_argument("--placement", choices=["tab", "split", "popup", "overlay", "zoomed"], default="tab")
+    ho.set_defaults(fn=herdr_open)
 
     w.set_defaults(fn=watch)
     d.set_defaults(fn=demo)

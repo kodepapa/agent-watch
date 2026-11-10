@@ -53,12 +53,13 @@ class LiveCollector:
     """Hook events file + team/task folders + transcripts -> Events."""
 
     def __init__(self, events_path: str, claude_dir: str, team: str = "",
-                 since: float = 3600, record_path: str = ""):
+                 since: float = 3600, record_path: str = "", herdr=None):
         self.events_path = events_path
         self.claude_dir = claude_dir
         self.pinned_team = team
         self.since = since
         self.record_path = record_path
+        self.herdr = herdr               # HerdrWatcher or None
         self.reset()
 
     def reset(self, team: str | None = None) -> None:
@@ -74,6 +75,8 @@ class LiveCollector:
         self.started = time.time()
         self.first_poll = True
         self.raw_samples: dict[str, dict] = {}
+        if self.herdr:
+            self.herdr.resend()
 
     # ---- teams ---------------------------------------------------------
     def teams(self) -> list[str]:
@@ -177,6 +180,9 @@ class LiveCollector:
         out += self._poll_transcripts()
         self.first_poll = False
         out.sort(key=lambda e: e.ts)
+        snap = self.herdr.take() if self.herdr else None
+        if snap is not None:             # after the sort: it describes now, not history
+            out.append(Event(ts=time.time(), kind="herdr", data=snap))
         if self.record_path and out:
             with open(self.record_path, "a") as f:
                 f.writelines(json.dumps(ev.to_dict()) + "\n" for ev in out)
