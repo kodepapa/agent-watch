@@ -3,9 +3,9 @@ class Agentwatch < Formula
 
   desc "Live terminal dashboard for Claude Code sessions and agent teams"
   homepage "https://github.com/kodepapa/agent-watch"
-  url "https://github.com/kodepapa/agent-watch/archive/e92a05c302980b48aaa9b4cb474a1d6726941325.tar.gz"
+  url "https://github.com/kodepapa/agent-watch/archive/69dd8c586ad2f704a6a4bf56cb04c5a8e639058d.tar.gz"
   version "0.1.0"
-  sha256 "da8627d17a533cac9edb3279363eee683c2b38b4f1aa6a668e431b54b41cc18a"
+  sha256 "f467497cd62a9d530c81330c751b27e6d13a5e3530b068b83ba5ee2a5fdde297"
   license "MIT"
   head "https://github.com/kodepapa/agent-watch.git", branch: "main"
 
