@@ -10,7 +10,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 from . import theme as th
-from .herdr import HerdrError
+from .herdr import HerdrError, HerdrHost
 from .model import State
 from .mux import MuxError
 from .panels import (
@@ -93,10 +93,13 @@ class AgentWatchApp(App):
         super().__init__()
         self.collector = collector
         self.mux = mux                           # mux.Mux when agentwatch hosts the sessions, else None
+        self.herdr_host = HerdrHost(herdr) if herdr else None    # herdr's agents, mirrored as sessions
+        self.hosting = bool(mux or herdr)        # is there a sessions view at all
+        self.command = mux.command if mux else "claude"
         self.prefix = prefix
         self.prefix_armed = False
         self.closing = ""                        # session waiting for a y to confirm closing it
-        self.view = view if mux else "dashboard"
+        self.view = view if self.hosting else "dashboard"
         self.sessions: list = []
         self.active = ""
         self.herdr = herdr                       # herdr.Herdr client, or None outside herdr
@@ -126,10 +129,10 @@ class AgentWatchApp(App):
         return self.mode
 
     def compose(self) -> ComposeResult:
-        if self.mux:
+        if self.hosting:
             with Horizontal(id="workspace"):
                 yield SessionList(id="sessions")
-                yield TerminalView(self.mux, id="terminal")
+                yield TerminalView(self.mux, self.herdr_host, id="terminal")
         with Vertical(id="dashboard"):
             yield HeaderBar(id="header")
             with Horizontal(id="main"):
@@ -145,7 +148,7 @@ class AgentWatchApp(App):
         yield StatusBar(id="status")
 
     def on_mount(self) -> None:
-        if self.mux:
+        if self.hosting:
             self._refresh_sessions()
             self.show_view(self.view)
         self.tick()
@@ -163,10 +166,15 @@ class AgentWatchApp(App):
         self.set_focus(self.terminal if view == "sessions" else None)
 
     def _refresh_sessions(self) -> None:
+        if not self.query("#terminal"):          # a tick can land while the app is closing
+            return
         try:
-            self.sessions = self.mux.sessions()
+            found = self.mux.sessions() if self.mux else []
         except MuxError:
             return
+        if self.herdr_host:                      # discovered from the snapshots already in State
+            found += self.herdr_host.sessions(self.state.herdr_agents)
+        self.sessions = found
         names = [s.name for s in self.sessions]
         if self.active not in names:
             self.active = names[-1] if names else ""
@@ -187,6 +195,10 @@ class AgentWatchApp(App):
             self.select_session(names[(at + step) % len(names)])
 
     def new_session(self) -> None:
+        if not self.mux:
+            self.notify("starting sessions here needs tmux (brew install tmux); "
+                        "herdr sessions appear on their own", severity="warning", timeout=6)
+            return
         current = next((s for s in self.sessions if s.name == self.active), None)
         folder = th_home(current.cwd if current and current.cwd else os.getcwd())
 
@@ -208,11 +220,11 @@ class AgentWatchApp(App):
 
     def handle_prefix(self, key: str) -> bool:
         """Prefix-key handling shared by the terminal and the dashboard. True when the key was ours."""
-        if not self.mux:
+        if not self.hosting:
             return False
         if self.closing:
             name, self.closing = self.closing, ""
-            if key == "y":
+            if key == "y" and self.mux:
                 self.mux.kill(name)
                 self._refresh_sessions()
             return True
@@ -223,7 +235,7 @@ class AgentWatchApp(App):
             return True
         self.prefix_armed = False
         if key == self.prefix:                   # prefix twice: pass one through to the session
-            self.terminal.send("keys", ("C-" + key.rpartition("+")[2],))
+            self.terminal.press(key)
         elif key == "c":
             self.new_session()
         elif key == "d":
@@ -233,7 +245,10 @@ class AgentWatchApp(App):
         elif key.isdigit() and 0 < int(key) <= len(self.sessions):
             self.select_session(self.sessions[int(key) - 1].name)
         elif key == "x" and self.active:
-            self.closing = self.active
+            if HerdrHost.owns(self.active):
+                self.notify("that session lives in herdr; close it there", timeout=4)
+            else:
+                self.closing = self.active
         elif key in ("pageup", "pagedown"):
             self.terminal.scroll_by(self.terminal.size.height // 2 * (1 if key == "pageup" else -1))
         elif key == "q":
@@ -250,14 +265,14 @@ class AgentWatchApp(App):
 
     async def action_quit(self) -> None:
         # ctrl+q is a priority binding in Textual; inside a session it belongs to the session.
-        if self.mux and self.view == "sessions" and self.focused is self.terminal:
-            self.terminal.send("keys", ("C-q",))
+        if self.hosting and self.view == "sessions" and self.focused is self.terminal:
+            self.terminal.press("ctrl+q")
             return
         self.exit()
 
     def tick(self) -> None:
         self.frame += 1
-        if self.mux and self.frame % 4 == 0:
+        if self.hosting and self.frame % 4 == 0:
             self._refresh_sessions()
         if hasattr(self.collector, "paused"):
             self.collector.paused = self.paused
@@ -313,8 +328,13 @@ class AgentWatchApp(App):
         if n > len(targets):
             return
         agent = targets[n - 1]
-        if self.mux and agent.term in [s.name for s in self.sessions]:
+        names = [s.name for s in self.sessions]
+        mirrored = HerdrHost.PREFIX + agent.pane
+        if agent.term in names:
             self.select_session(agent.term)
+            return
+        if mirrored in names and not self.leave_after_jump:
+            self.select_session(mirrored)       # show the herdr pane here instead of moving herdr's focus
             return
         if not self.herdr or not agent.pane:
             return

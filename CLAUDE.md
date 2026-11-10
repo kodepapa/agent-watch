@@ -113,6 +113,15 @@ terminal multiplexer for parallel agent sessions. Integration points:
   (`herdr plugin install kodepapa/agent-watch`). Its actions run
   `agentwatch herdr open --placement ...`, which calls `plugin.pane.open`.
 
+- Auto-discovery: `HerdrHost` (in `herdr.py`) answers the same calls as
+  `mux.Mux` (`sessions`, `capture`, `press`, `paste`, `resize`) for herdr
+  panes, so every agent in herdr's `agent.list` appears in the session list as
+  `herdr:<pane_id>` and can be viewed (`pane.read`, ansi) and typed into
+  (`pane.send_keys`, one key per press; `pane.send_text` for pastes).
+  `TerminalView.host(name)` picks the backend per session. Mirrored panes are
+  never resized or closed. With herdr but no tmux the sessions view still
+  works; only starting new sessions needs tmux.
+
 herdr field names come from its published schema
 (`docs/next/api/herdr-api.schema.json`, protocol 22), so they live in
 `herdr.py`, not `normalize.py`. Not yet run against a live herdr: tests use
@@ -143,7 +152,7 @@ resolved. Fix any of the three assumptions in `normalize.py` and add a test.
 
 ```sh
 uv sync --extra dev                               # uv only, no pip; uv.lock is committed
-uv run pytest                                     # 35 tests, ~15s; two need tmux
+uv run pytest                                     # 38 tests, ~20s; two need tmux
 uv run ruff check .                               # config in pyproject.toml; CI runs both
 uv run agentwatch demo                            # simulated session (sim.py)
 uv run agentwatch demo --at 0.58 --screenshot out.png --size 132x46

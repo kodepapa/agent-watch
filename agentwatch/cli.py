@@ -216,7 +216,7 @@ def watch(args) -> int:
                         since=parse_duration(args.since), record_path=args.record, herdr=watcher)
     app = AgentWatchApp(col, mode="live", advisor_model=args.advisor_model, events_hint=args.events,
                         herdr=client, mux=mux, prefix=args.prefix,
-                        view="dashboard" if args.dashboard else "sessions",
+                        view="dashboard" if (args.dashboard or args.screenshot) else "sessions",
                         leave_after_jump=bool(client) and os.environ.get("AGENTWATCH_HERDR_PLACEMENT") in TRANSIENT)
     try:
         return _run(app, args)

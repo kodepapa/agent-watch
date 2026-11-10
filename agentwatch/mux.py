@@ -40,6 +40,10 @@ class Session:
     cwd: str = ""
     command: str = ""
     activity: float = 0.0
+    host: str = "tmux"              # "tmux": runs inside agentwatch. "herdr": a herdr pane we mirror
+    title: str = ""                 # display name when it differs from `name`
+    pane: str = ""                  # herdr pane id
+    status: str = ""                # herdr's own reading of the agent: working, idle, blocked, done
 
 
 @dataclass
@@ -125,7 +129,7 @@ class Mux:
             self._tmux("resize-window", "-t", self._target(name), "-x", str(width), "-y", str(height), check=False)
 
     # ---- screen ----------------------------------------------------------
-    def capture(self, name: str, scroll: int = 0) -> Screen:
+    def capture(self, name: str, scroll: int = 0, height: int = 0) -> Screen:   # height: unused, tmux knows
         """The visible screen, or the screen `scroll` lines back into history."""
         target = self._target(name)
         grab = ["capture-pane", "-p", "-e", "-t", target]
@@ -157,6 +161,16 @@ class Mux:
 
     def send_hex(self, name: str, *codes: str) -> None:
         self._tmux("send-keys", "-H", "-t", self._target(name), *codes)
+
+    def press(self, name: str, key: str, character: str | None = None) -> None:
+        """Deliver one key press, given the way Textual names it."""
+        kind, payload = translate(key, character)
+        if kind == "text":
+            self.send_text(name, "".join(payload))
+        elif kind == "keys":
+            self.send_keys(name, *payload)
+        elif kind == "hex":
+            self.send_hex(name, *payload)
 
     def paste(self, name: str, text: str) -> None:
         """Paste as one block; -p uses bracketed paste when the program asked for it."""

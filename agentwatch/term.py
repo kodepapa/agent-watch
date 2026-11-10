@@ -12,7 +12,8 @@ from textual import events
 from textual.widget import Widget
 
 from . import theme as th
-from .mux import Mux, MuxError, Screen, translate
+from .herdr import HerdrError, HerdrHost
+from .mux import Mux, MuxError, Screen
 from .panels import Panel, badge, fmt_span, strip
 
 FAST, SLOW = 0.04, 0.25                  # seconds between captures: while busy, while quiet
@@ -23,9 +24,10 @@ class TerminalView(Widget, can_focus=True):
 
     DEFAULT_CSS = f"TerminalView {{ background: {th.BG}; }}"
 
-    def __init__(self, mux: Mux, **kwargs):
+    def __init__(self, mux: Mux | None = None, herdr: HerdrHost | None = None, **kwargs):
         super().__init__(**kwargs)
         self.mux = mux
+        self.herdr = herdr
         self.session = ""
         self.screen_data: Screen | None = None
         self.scroll = 0
@@ -42,6 +44,15 @@ class TerminalView(Widget, can_focus=True):
         self._stop.set()
         self._wake.set()
         self._outbox.put(None)
+
+    def host(self, name: str):
+        """Whoever runs the session: herdr for its panes, our tmux server otherwise."""
+        return self.herdr if self.herdr and HerdrHost.owns(name) else self.mux
+
+    def _later(self, name: str, call) -> None:
+        host = self.host(name)
+        if host:
+            self._outbox.put(lambda: call(host))
 
     # ---- what is shown ---------------------------------------------------
     def show(self, name: str) -> None:
@@ -60,7 +71,7 @@ class TerminalView(Widget, can_focus=True):
     def _fit(self) -> None:
         name, (w, h) = self.session, (self.size.width, self.size.height)
         if name and w and h:
-            self._outbox.put(lambda: self.mux.resize(name, w, h))
+            self._later(name, lambda host: host.resize(name, w, h))
 
     def on_resize(self, event: events.Resize) -> None:
         self._fit()
@@ -69,10 +80,11 @@ class TerminalView(Widget, can_focus=True):
     def _capture_loop(self) -> None:
         while not self._stop.is_set():
             name, scroll = self.session, self.scroll
-            if name:
+            host = self.host(name) if name else None
+            if host:
                 try:
-                    shot = self.mux.capture(name, scroll)
-                except MuxError:
+                    shot = host.capture(name, scroll, self.size.height)
+                except (MuxError, HerdrError):
                     shot = None              # the session ended; the app notices on its next tick
                 if name == self.session and shot != self.screen_data:
                     self.screen_data = shot
@@ -89,7 +101,7 @@ class TerminalView(Widget, can_focus=True):
             job = self._outbox.get()
             if job is None:
                 return
-            with contextlib.suppress(MuxError):   # the session is gone; nothing to deliver to
+            with contextlib.suppress(MuxError, HerdrError):   # the session is gone; nothing to deliver to
                 job()
             self._wake.set()
 
@@ -115,7 +127,7 @@ class TerminalView(Widget, can_focus=True):
             lines = [Text("connecting", style=th.DIM)]
         else:
             lines = [Text("no sessions yet", style=f"bold {th.INK}"), Text(""),
-                     Text(f"{prefix} then c    start {self.mux.command} in a folder", style=th.DIM),
+                     Text(f"{prefix} then c    start {self.app.command} in a folder", style=th.DIM),
                      Text(f"{prefix} then d    dashboard", style=th.DIM),
                      Text(f"{prefix} then ?    all keys", style=th.DIM)]
         pad = [Text("")] * max(0, (h - len(lines)) // 2)
@@ -124,16 +136,13 @@ class TerminalView(Widget, can_focus=True):
         return out
 
     # ---- input -----------------------------------------------------------
-    def send(self, kind: str, payload: tuple[str, ...]) -> None:
+    def press(self, key: str, character: str | None = None) -> None:
         name = self.session
-        if not name or not kind:
+        if not name:
             return
         if self.scroll:                      # typing returns to the live screen
             self.scroll = 0
-        fn = {"text": lambda: self.mux.send_text(name, "".join(payload)),
-              "keys": lambda: self.mux.send_keys(name, *payload),
-              "hex": lambda: self.mux.send_hex(name, *payload)}[kind]
-        self._outbox.put(fn)
+        self._later(name, lambda host: host.press(name, key, character))
         self.poke()
 
     def on_key(self, event: events.Key) -> None:
@@ -141,13 +150,13 @@ class TerminalView(Widget, can_focus=True):
         event.prevent_default()
         if self.app.handle_prefix(event.key):
             return
-        self.send(*translate(event.key, event.character))
+        self.press(event.key, event.character)
 
     def on_paste(self, event: events.Paste) -> None:
         event.stop()
         name, text = self.session, event.text
         if name and text:
-            self._outbox.put(lambda: self.mux.paste(name, text))
+            self._later(name, lambda host: host.paste(name, text))
             self.poke()
 
     def scroll_by(self, lines: int) -> None:
@@ -174,18 +183,23 @@ class SessionList(Panel):
         app = self.app
         s = self.state
         inner = w - 4
-        by_term = {a.term: a for a in s.agents.values() if a.term and a.role != "subagent"}
+        mine = [a for a in s.agents.values() if a.role != "subagent"]
+        by_term = {a.term: a for a in mine if a.term}
+        by_pane = {a.pane: a for a in mine if a.pane}
         lines: list[Text] = []
         for i, sess in enumerate(app.sessions):
-            agent = by_term.get(sess.name)
+            agent = by_pane.get(sess.pane) if sess.host == "herdr" else by_term.get(sess.name)
             selected = sess.name == app.active
             color = th.agent_color(agent.name, agent.color) if agent else th.DIM
             left = Text(f"{i + 1} " if i < 9 else "  ", style=f"bold {th.INK}" if selected else th.FAINT)
-            left.append(sess.name, style=f"bold {color}")
+            left.append(sess.title or (agent.name if agent and sess.host == "herdr" else "")
+                        or (sess.pane if sess.host == "herdr" else sess.name), style=f"bold {color}")
             if agent:
                 right = badge(agent)
                 if agent.since:
                     right.append(" " + fmt_span(max(0, s.now() - agent.since)), style=th.DIM)
+            elif sess.status:                # no hook events, but herdr reads the agent's screen
+                right = herdr_badge(sess.status)
             else:
                 right = Text("no events yet", style=th.FAINT)
             row = th.spread(left, right, inner)
@@ -195,7 +209,8 @@ class SessionList(Panel):
             if agent:
                 trail = Text("  ") + strip(s, agent, inner - 2, self.SPAN)
             else:
-                trail = Text("  " + (sess.command or ""), style=th.FAINT)
+                via = f"{sess.command or 'agent'} in herdr {sess.pane}" if sess.host == "herdr" else sess.command
+                trail = Text("  " + (via or ""), style=th.FAINT)
             trail = th.fit(trail, inner)
             if selected:
                 for line in (row, detail, trail):
@@ -207,7 +222,10 @@ class SessionList(Panel):
             lines += [Text("")] * (h - 3 - len(lines))
             lines.append(Text(f"strip: last {fmt_span(self.SPAN)}", style=th.FAINT))
         title = Text("sessions", style=f"bold {th.INK}")
-        waiting = sum(1 for a in by_term.values() if a.blocked)
+        waiting = sum(1 for sess in app.sessions
+                      if (by_pane.get(sess.pane) if sess.host == "herdr" else by_term.get(sess.name)) is None
+                      and sess.status == "blocked")
+        waiting += sum(1 for a in mine if a.blocked and (a.term or a.pane))
         right = Text(f"{waiting} need you", style=f"bold {th.WARN}") if waiting else ""
         return th.box(w, h, title, lines, right=right)
 
@@ -215,6 +233,15 @@ class SessionList(Panel):
         index = (event.y - 1) // self.ROW_H
         if 0 <= index < len(self.app.sessions):
             self.app.select_session(self.app.sessions[index].name)
+
+
+def herdr_badge(status: str) -> Text:
+    """herdr's status for an agent agentwatch has no hook events for."""
+    label, color = {"blocked": ("needs you", th.WARN), "working": ("working", th.OK),
+                    "done": ("done", th.INK)}.get(status, (status, th.DIM))
+    t = Text(th.G["status"] + " ", style=color)
+    t.append(label, style=f"bold {color}" if status in ("blocked", "working") else color)
+    return t
 
 
 def th_home(path: str) -> str:

@@ -597,15 +597,15 @@ class StatusBar(Panel):
         app = self.app
         full = "q quit  p pause  t team  w window"
         options, style = [full], th.FAINT
-        if s.jump_targets() and (app.herdr or app.mux):
+        if s.jump_targets() and (app.herdr or app.hosting):
             options = ["1-9 jump  " + full, "1-9 jump  q quit"]
-        if app.mux and app.closing:
+        if app.hosting and app.closing:
             options, style = [f"close {app.closing}?  y yes  any other key no"], f"bold {th.WARN}"
-        elif app.mux and app.prefix_armed:
+        elif app.hosting and app.prefix_armed:
             options, style = ["c new  1-9 switch  d dashboard  x close  q detach"], f"bold {th.WARN}"
-        elif app.mux and app.view == "sessions":
+        elif app.hosting and app.view == "sessions":
             options = [f"{app.prefix} then  c new  1-9 switch  d dashboard  ? keys", f"{app.prefix} ? keys"]
-        elif app.mux:
+        elif app.hosting:
             options = [f"{app.prefix} d sessions  " + o for o in options] + options
         for keys in options:
             if len(t.plain.rstrip()) + len(keys) + 2 <= w:

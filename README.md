@@ -127,8 +127,15 @@ Everything stays on your machine: agentwatch makes no network calls.
 [herdr](https://herdr.dev) is a terminal multiplexer for coding agents.
 agentwatch now hosts sessions itself, so you do not need herdr. If you still
 run your Claude Code sessions in herdr panes, agentwatch connects to herdr's
-local socket on its own and adds three things:
+local socket on its own and adds four things:
 
+- **Your herdr agents show up by themselves.** Every agent herdr sees is
+  listed in the session list next to the sessions agentwatch hosts, with
+  herdr's status for it, even before you install the agentwatch hooks.
+  Select one and you see its screen and can type into it, for example to
+  answer a permission prompt. agentwatch only mirrors these panes: it never
+  resizes or closes them, and `home`, `end`, `page up/down` and `delete` are
+  not passed on because herdr's API has no names for them.
 - **Who needs you.** herdr detects when an agent is stuck on an approval or a
   question. agentwatch shows that agent as `needs you`, logs it, and counts it
   in the status bar. Hooks alone cannot tell you this.
@@ -258,7 +265,7 @@ Tested on Linux. macOS should work; Windows is untested.
 ```sh
 git clone https://github.com/kodepapa/agent-watch && cd agent-watch
 uv sync --extra dev
-uv run pytest                    # 35 tests, about 15s (two need tmux)
+uv run pytest                    # 38 tests, about 20s (two need tmux)
 uv run ruff check .
 uv run agentwatch demo --at 0.58 --screenshot docs/screenshot.png   # regenerate the screenshot
 uv run python scripts/make_gif.py docs/demo.gif                     # regenerate the GIF

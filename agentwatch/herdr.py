@@ -15,6 +15,8 @@ import os
 import socket
 import threading
 
+from .mux import Screen, Session
+
 PLUGIN_ID = "kodepapa.agentwatch"
 PLACEMENTS = ("tab", "split", "popup", "overlay", "zoomed")
 # Placements herdr closes for us when the program exits: leave after a jump.
@@ -95,6 +97,7 @@ class Herdr:
                   for w in self.call("workspace.list").get("workspaces") or []}
         return {"connected": True, "agents": [
             {"pane_id": a.get("pane_id", ""),
+             "cwd": a.get("foreground_cwd") or a.get("cwd") or "",
              "workspace": labels.get(a.get("workspace_id"), ""),
              "status": a.get("agent_status", "unknown"),
              "name": a.get("name") or "",
@@ -124,6 +127,83 @@ class Herdr:
             if env.get("HERDR_PANE_ID"):
                 params["target_pane_id"] = env["HERDR_PANE_ID"]
         return self.call("plugin.pane.open", params)
+
+
+# Textual key name -> herdr key name. herdr's send_keys takes "enter", "esc", "ctrl+c", single
+# characters and a few named punctuation keys; it has no home, end, page or delete keys.
+HERDR_KEYS = {"escape": "esc", "enter": "enter", "tab": "tab", "shift+tab": "shift+tab",
+              "backspace": "backspace", "up": "up", "down": "down", "left": "left", "right": "right",
+              "space": "space", "shift+enter": "alt+enter", "alt+enter": "alt+enter"}
+HERDR_CHARS = {" ": "space", "+": "plus"}
+
+
+def herdr_key(key: str, character: str | None) -> str:
+    """One Textual key press as a herdr key name, or "" when herdr cannot send it."""
+    if key in HERDR_KEYS:
+        return HERDR_KEYS[key]
+    if character and character.isprintable() and not key.startswith(("ctrl+", "alt+")):
+        return HERDR_CHARS.get(character, character)
+    mods, _, base = key.rpartition("+")
+    base = HERDR_KEYS.get(base, base)
+    if mods and (len(base) == 1 or base in HERDR_KEYS.values() or (base[:1] == "f" and base[1:].isdigit())):
+        return f"{mods}+{base}"
+    if base[:1] == "f" and base[1:].isdigit():
+        return base
+    return ""
+
+
+class HerdrHost:
+    """herdr panes as sessions: the same calls `mux.Mux` offers, answered by herdr.
+
+    agentwatch does not own these terminals. It mirrors the pane's screen and
+    passes keys on; it never resizes or closes them.
+    """
+
+    PREFIX = "herdr:"                    # session names; tmux names cannot contain a colon
+    HISTORY = 2000                       # how far back scrolling may ask herdr for
+
+    def __init__(self, client: Herdr):
+        self.client = client
+
+    @classmethod
+    def owns(cls, name: str) -> bool:
+        return name.startswith(cls.PREFIX)
+
+    @classmethod
+    def pane(cls, name: str) -> str:
+        return name[len(cls.PREFIX):]
+
+    def sessions(self, agents: list[dict]) -> list[Session]:
+        """Sessions for the agents in a snapshot (see `Herdr.snapshot`)."""
+        return [Session(name=self.PREFIX + a["pane_id"], cwd=a.get("cwd", ""), command=a.get("kind", ""),
+                        host="herdr", title=a.get("name") or "", pane=a["pane_id"],
+                        status=a.get("status", ""))
+                for a in agents]
+
+    def capture(self, name: str, scroll: int = 0, height: int = 0) -> Screen:
+        params = {"pane_id": self.pane(name), "source": "visible", "format": "ansi", "strip_ansi": False}
+        if scroll > 0 and height:
+            params.update(source="recent", lines=height + scroll)
+        text = (self.client.call("pane.read", params).get("read") or {}).get("text", "")
+        lines = text.split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+        if scroll > 0 and height:
+            lines = lines[:-scroll][-height:]
+        # herdr does not report the cursor; Claude Code draws its own.
+        return Screen(lines, (0, 0), False, self.HISTORY, (0, len(lines)))
+
+    def press(self, name: str, key: str, character: str | None = None) -> None:
+        mapped = herdr_key(key, character)
+        if mapped:
+            self.client.call("pane.send_keys", {"pane_id": self.pane(name), "keys": [mapped]})
+
+    def paste(self, name: str, text: str) -> None:
+        if text:                         # herdr wraps it in a bracketed paste when the program asked
+            self.client.call("pane.send_text", {"pane_id": self.pane(name), "text": text})
+
+    def resize(self, name: str, width: int, height: int) -> None:
+        pass                             # the pane's size belongs to herdr's layout
 
 
 class HerdrWatcher:
