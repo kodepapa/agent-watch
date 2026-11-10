@@ -70,14 +70,14 @@ resolved. Fix any of the three assumptions in `normalize.py` and add a test.
 ## Commands
 
 ```sh
-pip install -e ".[dev]"
-python -m pytest                           # 11 tests, ~10s
-ruff check .                               # config in pyproject.toml; CI runs both
-agentwatch demo                            # simulated session (sim.py)
-agentwatch demo --at 0.58 --screenshot out.png --size 132x46
-agentwatch install-hooks --dry-run         # see the settings.json change first
-agentwatch doctor
-python scripts/make_gif.py docs/demo.gif   # animated capture of the live demo
+uv sync --extra dev                               # uv only, no pip; uv.lock is committed
+uv run pytest                                     # 11 tests, ~10s
+uv run ruff check .                               # config in pyproject.toml; CI runs both
+uv run agentwatch demo                            # simulated session (sim.py)
+uv run agentwatch demo --at 0.58 --screenshot out.png --size 132x46
+uv run agentwatch install-hooks --dry-run         # see the settings.json change first
+uv run agentwatch doctor
+uv run python scripts/make_gif.py docs/demo.gif   # animated capture of the live demo
 ```
 
 Screenshots: `shot.py` renders Textual's compositor output to PNG with Pillow

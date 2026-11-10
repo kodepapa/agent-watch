@@ -40,8 +40,14 @@ Requires Python 3.10 or newer. Try the simulated session first; it needs no
 Claude Code setup.
 
 ```sh
-pipx install "git+https://github.com/kodepapa/agent-watch"
-agentwatch demo
+uvx --from git+https://github.com/kodepapa/agent-watch agentwatch demo
+```
+
+That runs the demo with [uv](https://docs.astral.sh/uv/) without installing
+anything. To watch real sessions, install it so the hooks have a stable path:
+
+```sh
+uv tool install git+https://github.com/kodepapa/agent-watch
 ```
 
 Or with Homebrew (macOS and Linux):
@@ -51,9 +57,9 @@ brew tap kodepapa/agent-watch https://github.com/kodepapa/agent-watch
 brew install kodepapa/agent-watch/agentwatch
 ```
 
-`pip install` works too. For PNG export, install the `screenshots` extra (not
-included in the Homebrew build):
-`pipx install "agentwatch[screenshots] @ git+https://github.com/kodepapa/agent-watch"`.
+For PNG export, install with the `screenshots` extra (not included in the
+Homebrew build):
+`uv tool install "agentwatch[screenshots] @ git+https://github.com/kodepapa/agent-watch"`.
 
 ## Watch your own sessions
 
@@ -157,11 +163,11 @@ Tested on Linux. macOS should work; Windows is untested.
 
 ```sh
 git clone https://github.com/kodepapa/agent-watch && cd agent-watch
-pip install -e ".[dev]"
-python -m pytest                 # 11 tests, about 10s
-ruff check .
-agentwatch demo --at 0.58 --screenshot docs/screenshot.png   # regenerate the screenshot
-python scripts/make_gif.py docs/demo.gif                     # regenerate the GIF
+uv sync --extra dev
+uv run pytest                    # 11 tests, about 10s
+uv run ruff check .
+uv run agentwatch demo --at 0.58 --screenshot docs/screenshot.png   # regenerate the screenshot
+uv run python scripts/make_gif.py docs/demo.gif                     # regenerate the GIF
 ```
 
 Issues and pull requests are welcome. Two rules keep the project honest: every
