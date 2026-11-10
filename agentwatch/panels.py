@@ -46,7 +46,7 @@ def pane_tag(s: State, a: Agent) -> Text:
         t.append(f"{targets.index(a) + 1} ", style=f"bold {th.INK}")
     if a.pane:
         t.append(a.pane, style=th.DIM)
-    return t
+    return Text(t.plain.rstrip(), style=f"bold {th.INK}") if not a.pane else t
 
 
 class Panel(Widget):
@@ -554,11 +554,20 @@ class StatusBar(Panel):
         blocked = sum(1 for a in s.agents.values() if a.blocked)
         if blocked:
             seg("needs you", str(blocked), th.WARN)
+        app = self.app
         full = "q quit  p pause  t team  w window"
-        options = [full]
-        if s.jump_targets() and self.app.herdr:
+        options, style = [full], th.FAINT
+        if s.jump_targets() and (app.herdr or app.mux):
             options = ["1-9 jump  " + full, "1-9 jump  q quit"]
+        if app.mux and app.closing:
+            options, style = [f"close {app.closing}?  y yes  any other key no"], f"bold {th.WARN}"
+        elif app.mux and app.prefix_armed:
+            options, style = ["c new  1-9 switch  d dashboard  x close  q detach"], f"bold {th.WARN}"
+        elif app.mux and app.view == "sessions":
+            options = [f"{app.prefix} then  c new  1-9 switch  d dashboard  ? keys", f"{app.prefix} ? keys"]
+        elif app.mux:
+            options = [f"{app.prefix} d sessions  " + o for o in options] + options
         for keys in options:
             if len(t.plain.rstrip()) + len(keys) + 2 <= w:
-                return [th.spread(t, Text(keys, style=th.FAINT), w)]
+                return [th.spread(t, Text(keys, style=style), w)]
         return [th.fit(t, w)]

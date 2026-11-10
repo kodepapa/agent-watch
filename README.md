@@ -4,9 +4,10 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 
-**A live terminal dashboard for Claude Code sessions and agent teams.**
+**One terminal for all your Claude Code sessions, with a live dashboard of what they are doing.**
 
-See what your agents are doing while they do it: the lead, every teammate and
+Run your sessions inside agentwatch, switch between them, and chat in each one
+directly. Then see what the agents are doing while they do it: the lead, every teammate and
 subagent, the shared task list, advisor calls, a per-agent timeline, a log tail
 and token usage. Everything on screen comes from data Claude Code already
 exposes (hooks, team and task files, session transcripts). Nothing is staged.
@@ -22,6 +23,10 @@ exposes (hooks, team and task files, session transcripts). Nothing is staged.
 
 ## What you get
 
+- **Your sessions in one place**: every Claude Code session runs inside
+  agentwatch with its real terminal UI. A list on the left shows each one as
+  working, idle or `needs you`; switch with a key and type straight into it.
+  Sessions keep running when you close agentwatch.
 - **Lead and team cards**: who is working, idle or done, what each agent is
   running right now, call and error counts, context size and model.
 - **Task list**: the team's shared tasks with owner, state and what each
@@ -61,13 +66,48 @@ For PNG export, install with the `screenshots` extra (not included in the
 Homebrew build):
 `uv tool install "agentwatch[screenshots] @ git+https://github.com/kodepapa/agent-watch"`.
 
-## Watch your own sessions
+## Run your sessions inside agentwatch
 
 ```sh
 agentwatch install-hooks         # adds async hooks to ~/.claude/settings.json (backs it up first)
-claude                           # in another terminal, as usual
-agentwatch                       # live monitor
+agentwatch                       # opens the sessions view
 ```
+
+Press `ctrl+b` then `c` to start Claude Code in a folder. It runs in the main
+area with its normal interface, and everything you type goes to it. Start as
+many as you like and switch between them:
+
+| keys | what happens |
+|---|---|
+| `ctrl+b` `c` | new session (asks for the folder) |
+| `ctrl+b` `1`-`9`, `n`, `p` | switch session; clicking one in the list works too |
+| `ctrl+b` `d` | dashboard and back |
+| `ctrl+b` `x` | close the current session (asks first) |
+| `ctrl+b` `pgup` / `pgdn`, mouse wheel | scroll back |
+| `ctrl+b` `q` | leave agentwatch; sessions keep running |
+| `ctrl+b` `ctrl+b` | send a real `ctrl+b` to Claude Code |
+
+The session list shows each session's state from its hooks: what it is running
+right now, idle, or `needs you` when Claude Code is stopped on a permission
+prompt or a question. On the dashboard, the number keys jump back to a session.
+
+Sessions live in [tmux](https://github.com/tmux/tmux) behind the scenes, on a
+private tmux server that does not touch your own tmux setup. That is what keeps
+agents working after you close agentwatch: run `agentwatch` again and they are
+all still there. tmux has to be installed (`brew install tmux`,
+`apt install tmux`); without it agentwatch opens as a dashboard only.
+
+`agentwatch new [folder]` starts a session from a script or another terminal,
+`agentwatch ls` lists them and `agentwatch kill <name>` closes one.
+`--command` runs something other than `claude`, `--prefix ctrl+a` changes the
+prefix key, and `--dashboard` starts on the dashboard.
+
+Limits of this first version: one session is visible at a time (no splits),
+mouse clicks are not passed to Claude Code, and to select text with the mouse
+you hold `shift` (or `option` in iTerm2) like in any full-screen terminal app.
+
+You can still run `claude` in any other terminal. With the hooks installed it
+shows up on the dashboard, but not in the session list.
 
 `install-hooks --dry-run` prints the JSON instead of writing it, and
 `--settings .claude/settings.local.json` installs for one project only.
@@ -83,7 +123,8 @@ Everything stays on your machine: agentwatch makes no network calls.
 
 ## Use it inside herdr
 
-[herdr](https://herdr.dev) is a terminal multiplexer for coding agents. If you
+[herdr](https://herdr.dev) is a terminal multiplexer for coding agents.
+agentwatch now hosts sessions itself, so you do not need herdr. If you still
 run your Claude Code sessions in herdr panes, agentwatch connects to herdr's
 local socket on its own and adds three things:
 
@@ -131,14 +172,15 @@ pass `--ascii` (or set `AGENTWATCH_ASCII=1`) for plain ASCII.
 
 ## Keys
 
-`q` quit, `p` pause, `t` switch team, `w` timeline window (fit, 2m, 10m, 30m, 2h),
+On the dashboard: `q` quit, `p` pause, `t` switch team, `w` timeline window (fit, 2m, 10m, 30m, 2h),
 `+` / `-` replay speed, `1`-`9` jump to an agent's pane (inside herdr).
 
 ## Commands
 
 | command | what it does |
 |---|---|
-| `agentwatch` | live monitor (`--team`, `--since 30m`, `--record file.jsonl`, `--advisor-model "opus 5.5"`) |
+| `agentwatch` | sessions and live dashboard (`--team`, `--since 30m`, `--record file.jsonl`, `--advisor-model "opus 5.5"`, `--no-sessions`) |
+| `agentwatch new`, `ls`, `kill` | start, list and close hosted sessions from outside |
 | `agentwatch demo` | simulated session (`--speed 4`, `--at 0.6` to freeze at 60%) |
 | `agentwatch replay file.jsonl` | play back a recording (`--speed`, `--at`) |
 | `agentwatch doctor` | show raw hook keys, resolved agents, teams, tasks, advisor calls and herdr panes |
@@ -154,7 +196,8 @@ pass `--ascii` (or set `AGENTWATCH_ASCII=1`) for plain ASCII.
 | team members and models | `~/.claude/teams/<team>/config.json` |
 | advisor calls and advice | `server_tool_use` blocks named `advisor` in the session transcript |
 | tokens read, context size, model | `usage` and `model` on assistant messages in the transcript |
-| `needs you`, pane ids, jump keys | herdr's socket API (`agent.list`, `agent.focus`) and `HERDR_PANE_ID` in the hook |
+| session list, `needs you` | the private tmux server, plus `Notification` hooks for permission prompts and questions |
+| herdr pane ids and jump keys | herdr's socket API (`agent.list`, `agent.focus`) and `HERDR_PANE_ID` in the hook |
 
 Advisor "moments" (before plan, after error, mid-work, before done) are
 inferred from what the agent was doing when it called the advisor. Claude Code
@@ -185,6 +228,8 @@ whether any of the above needs adjusting.
 ```
 agentwatch/
   hooks/emit.py   hook script Claude Code runs
+  mux.py          hosted sessions: tmux wrapper (create, capture, send keys)
+  term.py         terminal view and session list widgets
   herdr.py        herdr socket client: panes, blocked agents, focus
   normalize.py    raw payloads, team/task files, transcripts -> Events
   sources.py      live collector (tails files) and replay collector
@@ -201,7 +246,8 @@ agentwatch is alpha (0.1.0). It is developed and tested against a simulated
 session; the three assumptions listed above have not yet been confirmed against
 a real agent-team run. The herdr integration is written against herdr's
 published API schema (protocol 22, herdr 0.9.5) and tested with a stand-in
-server, not yet against a live herdr. If a panel looks wrong on your sessions, the output of
+server, not yet against a live herdr. Hosted sessions are tested against a real tmux
+and the Claude Code start screen, but not through a long working session. If a panel looks wrong on your sessions, the output of
 `agentwatch doctor` in an issue is the most useful thing you can send.
 
 Tested on Linux. macOS should work; Windows is untested.
@@ -211,7 +257,7 @@ Tested on Linux. macOS should work; Windows is untested.
 ```sh
 git clone https://github.com/kodepapa/agent-watch && cd agent-watch
 uv sync --extra dev
-uv run pytest                    # 22 tests, about 10s
+uv run pytest                    # 29 tests, about 15s (two need tmux)
 uv run ruff check .
 uv run agentwatch demo --at 0.58 --screenshot docs/screenshot.png   # regenerate the screenshot
 uv run python scripts/make_gif.py docs/demo.gif                     # regenerate the GIF

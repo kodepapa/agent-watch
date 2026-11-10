@@ -10,6 +10,7 @@ from rich.text import Text
 
 BG = "#1c1f26"
 PANEL = "#20242c"
+SELECT = "#2a2f3a"                       # background of the selected row
 INK = "#d8d4c8"
 DIM = "#7a7f8c"
 FAINT = "#3d424e"

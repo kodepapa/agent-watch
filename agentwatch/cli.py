@@ -211,16 +211,70 @@ def watch(args) -> int:
         watcher = HerdrWatcher(client)
         watcher.poll_once()
         watcher.start()
+    mux = None if (args.no_sessions or args.screenshot) else _mux(args.command)
     col = LiveCollector(args.events, args.claude_dir, team=args.team,
                         since=parse_duration(args.since), record_path=args.record, herdr=watcher)
     app = AgentWatchApp(col, mode="live", advisor_model=args.advisor_model, events_hint=args.events,
-                        herdr=client,
+                        herdr=client, mux=mux, prefix=args.prefix,
+                        view="dashboard" if args.dashboard else "sessions",
                         leave_after_jump=bool(client) and os.environ.get("AGENTWATCH_HERDR_PLACEMENT") in TRANSIENT)
     try:
         return _run(app, args)
     finally:
         if watcher:
             watcher.stop()
+        if mux:
+            left = len(mux.sessions())
+            if left:
+                print(f"{left} session{'' if left == 1 else 's'} still running. "
+                      "Run agentwatch to return, or agentwatch ls to list them.")
+
+
+def _mux(command: str = ""):
+    """The session host when tmux is installed, else None (dashboard only)."""
+    from .mux import DEFAULT_COMMAND, Mux
+    return Mux(command=command or DEFAULT_COMMAND) if Mux.available() else None
+
+
+def _need_mux(args):
+    mux = _mux(getattr(args, "command", ""))
+    if not mux:
+        print("hosted sessions need tmux, which is not installed (brew install tmux / apt install tmux)",
+              file=sys.stderr)
+    return mux
+
+
+def sessions_new(args) -> int:
+    from .mux import MuxError
+    mux = _need_mux(args)
+    if not mux:
+        return 1
+    try:
+        print(mux.new(args.folder, name=args.name))
+    except MuxError as e:
+        print(f"could not start a session: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def sessions_ls(args) -> int:
+    mux = _need_mux(args)
+    if not mux:
+        return 1
+    for s in mux.sessions():
+        print(f"{s.name:<24} {s.command:<10} {s.cwd}")
+    return 0
+
+
+def sessions_kill(args) -> int:
+    mux = _need_mux(args)
+    if not mux:
+        return 1
+    if args.name not in [s.name for s in mux.sessions()]:
+        print(f"no session named {args.name}", file=sys.stderr)
+        return 1
+    mux.kill(args.name)
+    return 0
 
 
 def _herdr_client():
@@ -306,6 +360,11 @@ def main(argv=None) -> int:
     w.add_argument("--since", default="2h", help="history to load on start, e.g. 30m, 2h")
     w.add_argument("--record", default="", help="also write normalized events to this file")
     w.add_argument("--no-herdr", action="store_true", help="do not talk to a running herdr server")
+    w.add_argument("--no-sessions", action="store_true", help="dashboard only: do not host sessions")
+    w.add_argument("--dashboard", action="store_true", help="start on the dashboard instead of the sessions")
+    w.add_argument("--command", default="", help="program a new session runs (default: claude)")
+    w.add_argument("--prefix", default=os.environ.get("AGENTWATCH_PREFIX") or "ctrl+b",
+                   help="key that starts an agentwatch command inside a session (default: ctrl+b)")
 
     d = sub.add_parser("demo", help="run a simulated agent team session")
     common(d, live=False)
@@ -332,6 +391,16 @@ def main(argv=None) -> int:
     doc.add_argument("--events", default=DEFAULT_EVENTS)
     doc.add_argument("--claude-dir", default=DEFAULT_CLAUDE)
     doc.add_argument("--since", default="2h")
+
+    n = sub.add_parser("new", help="start a hosted session without opening agentwatch")
+    n.add_argument("folder", nargs="?", default=".")
+    n.add_argument("--name", default="", help="session name (default: the folder name)")
+    n.add_argument("--command", default="", help="program to run (default: claude)")
+    n.set_defaults(fn=sessions_new)
+    sub.add_parser("ls", help="list hosted sessions").set_defaults(fn=sessions_ls)
+    k = sub.add_parser("kill", help="close a hosted session")
+    k.add_argument("name")
+    k.set_defaults(fn=sessions_kill)
 
     h = sub.add_parser("herdr", help="herdr integration")
     hsub = h.add_subparsers(dest="herdr_cmd", required=True)

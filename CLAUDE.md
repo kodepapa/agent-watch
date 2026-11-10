@@ -19,6 +19,8 @@ own box as Rich `Text` via `theme.box()`.
 ## Data flow
 
 ```
+tmux (mux.py) ──> term.py: the hosted sessions themselves, drawn and typed into directly
+
 hooks/emit.py ──> ~/.agentwatch/events.jsonl ─┐
 ~/.claude/teams/<team>/config.json ───────────┤
 ~/.claude/tasks/<team>/*.json ────────────────┼─> sources.py ─> normalize.py ─> Event ─> model.State ─> panels
@@ -47,6 +49,38 @@ session transcripts (transcript_path) ────────┘        (LiveCo
   `◆` advisor, `✓` task done, `┃` task claimed, `▸` prompt.
 - Advisor "moments" are **inferred** (before plan, after error, mid-work,
   before done) and the panel says so. Claude Code doesn't report a reason.
+
+## Hosted sessions (the sessions view)
+
+The user wants agentwatch to be the place the sessions live, replacing herdr:
+see all sessions, switch, and chat in them without leaving the app.
+
+- `mux.py` wraps tmux: one detached tmux session per Claude Code session, on a
+  private server (`tmux -L agentwatch -f /dev/null`). tmux is the terminal
+  emulator and what keeps sessions alive after agentwatch exits. No Textual
+  imports there. Sessions start with `AGENTWATCH_SESSION=<name>` and with
+  `TMUX` unset (so Claude Code keeps teammates in-process instead of splitting
+  panes we do not draw).
+- `term.py`: `TerminalView` draws `capture-pane -e` output with
+  `Text.from_ansi` and forwards keys (`mux.translate`) through a sender
+  thread; a capture thread polls fast while busy, slow while quiet.
+  `SessionList` is the sidebar.
+- `app.py`: `#workspace` (sessions view) and `#dashboard` are siblings; one is
+  displayed at a time. `handle_prefix` implements the herdr-style prefix
+  (`ctrl+b`, then c/1-9/n/p/d/x/q). The terminal widget stops every key event,
+  so dashboard bindings (q, p, t, w) never fire while typing in a session.
+- `hooks/emit.py` reports `_aw_session`; `Resolver.name_for` names a hosted
+  session after its tab, and a `term` event sets `Agent.term`.
+- `needs you` without herdr: `Notification` hooks with
+  `notification_type` `permission_prompt` / `elicitation_dialog` set
+  `Agent.hook_blocked`; the next tool/prompt/stop event clears it. These
+  names are assumptions (in `normalize.py`), not yet seen in a real payload.
+- tmux gotchas found the hard way: `set -g window-size manual` crashes tmux
+  3.4 on the next `new-session`; control characters in `-F` formats are
+  escaped (hence the `" :: "` separator); `default-terminal` is
+  `screen-256color` because macOS has no `tmux-256color` terminfo.
+- Not built: splits, mouse pass-through, a persistent tmux control-mode
+  connection (each key and capture is a tmux subprocess today).
 
 ## herdr integration
 
@@ -101,7 +135,7 @@ resolved. Fix any of the three assumptions in `normalize.py` and add a test.
 
 ```sh
 uv sync --extra dev                               # uv only, no pip; uv.lock is committed
-uv run pytest                                     # 22 tests, ~10s
+uv run pytest                                     # 29 tests, ~15s; two need tmux
 uv run ruff check .                               # config in pyproject.toml; CI runs both
 uv run agentwatch demo                            # simulated session (sim.py)
 uv run agentwatch demo --at 0.58 --screenshot out.png --size 132x46

@@ -10,6 +10,7 @@ class Agentwatch < Formula
   head "https://github.com/kodepapa/agent-watch.git", branch: "main"
 
   depends_on "python@3.13"
+  depends_on "tmux"
 
   resource "linkify-it-py" do
     url "https://files.pythonhosted.org/packages/45/98/7a1a5f31fd5c7ba93e963b168e244b8e3dd705b3d2a718e3c3307583bf57/linkify_it_py-2.2.0.tar.gz"

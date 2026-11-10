@@ -87,6 +87,12 @@ def _first_line(value, n=60) -> str:
     return ""
 
 
+# Notifications that mean "Claude is stopped until you answer" (a permission prompt or a
+# question), as opposed to "Claude is done and idle". Assumed from Claude Code's docs.
+ATTENTION_TYPES = ("permission_prompt", "elicitation_dialog")
+ATTENTION_HINTS = ("needs your permission", "needs your approval", "needs your attention")
+
+
 class Resolver:
     """Maps sessions and agent ids to display names."""
 
@@ -95,6 +101,7 @@ class Resolver:
         self.agent_ids: dict[str, str] = {}      # agent_id -> display name
         self.lead_session = ""
         self.panes: dict[str, str] = {}          # display name -> herdr pane id
+        self.terms: dict[str, str] = {}          # display name -> hosted session name
         self._type_counts: dict[str, int] = {}
 
     def learn_member(self, agent_id: str, name: str) -> None:
@@ -127,6 +134,10 @@ class Resolver:
         session = p.get("session_id", "")
         if session in self.session_names:
             return self.session_names[session]
+        hosted = p.get("_aw_session")
+        if isinstance(hosted, str) and hosted:
+            # A session agentwatch hosts is called what its tab is called.
+            return self._bind(p, hosted)
         if not self.lead_session and session:
             self.lead_session = session
             self.session_names[session] = LEAD
@@ -147,6 +158,13 @@ class Resolver:
 def hook_events(p: dict, r: Resolver) -> list[Event]:
     """One raw hook payload -> zero or more Events."""
     events = _hook_events(p, r)
+    hosted = p.get("_aw_session")
+    if hosted and events:
+        for agent in dict.fromkeys(ev.agent for ev in events):
+            if r.terms.get(agent) != hosted:
+                r.terms[agent] = hosted
+                events.append(Event(ts=events[0].ts, kind="term", agent=agent,
+                                    session=events[0].session, data={"name": hosted}))
     pane = (p.get("_herdr") or {}).get("pane_id")
     if pane and events:
         # The hook saw herdr's pane id in its environment: tell the model once per agent.
@@ -204,7 +222,11 @@ def _hook_events(p: dict, r: Resolver) -> list[Event]:
     if name in ("Stop", "SubagentStop"):
         return [Event(kind="stop", **base)]
     if name == "Notification":
-        return [Event(kind="notification", detail=_first_line(p.get("message"), 60), **base)]
+        message = str(p.get("message") or "")
+        waiting = (p.get("notification_type") in ATTENTION_TYPES
+                   or any(hint in message.lower() for hint in ATTENTION_HINTS))
+        return [Event(kind="notification", detail=_first_line(message, 60),
+                      data={"attention": waiting}, **base)]
     if name in ("PreCompact",):
         return [Event(kind="compact", **base)]
     if name in ("TaskCreated", "TaskCompleted"):

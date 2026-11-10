@@ -61,6 +61,8 @@ def main():
            if k.startswith("CLAUDE") and any(h in k for h in ENV_HINTS)}
     if env:
         payload["_env"] = _trim(env)
+    if os.environ.get("AGENTWATCH_SESSION"):  # hosted by agentwatch: which of its sessions
+        payload["_aw_session"] = os.environ["AGENTWATCH_SESSION"][:64]
     if os.environ.get("HERDR_ENV") == "1":  # running in a herdr pane: remember which one
         herdr = {k: os.environ.get(v, "") for k, v in HERDR_VARS.items()}
         if herdr["pane_id"]:

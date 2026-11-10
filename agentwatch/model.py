@@ -12,6 +12,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
 LEAD = "lead"
+# Events that show an agent is moving again after a permission prompt or question.
+ANSWERED = {"tool_start", "tool_end", "prompt", "stop", "idle", "session_end"}
 
 
 @dataclass
@@ -57,7 +59,14 @@ class Agent:
     session: str = ""
     pane: str = ""                  # herdr pane id, when the session runs inside herdr
     workspace: str = ""             # herdr workspace label
-    blocked: bool = False           # herdr sees an approval or question waiting
+    term: str = ""                  # hosted session name, when agentwatch runs the terminal
+    herdr_blocked: bool = False     # herdr sees an approval or question on screen
+    hook_blocked: bool = False      # Claude Code sent a permission or question notification
+
+    @property
+    def blocked(self) -> bool:
+        """Stopped until the user answers."""
+        return self.herdr_blocked or self.hook_blocked
 
 
 @dataclass
@@ -136,8 +145,8 @@ class State:
         return [a for a in self.ordered_agents() if a.role != LEAD]
 
     def jump_targets(self) -> list[Agent]:
-        """Agents whose herdr pane can be focused with the number keys."""
-        return [a for a in self.ordered_agents() if a.pane and a.role != "subagent"][:9]
+        """Agents the number keys can jump to: a hosted session or a herdr pane."""
+        return [a for a in self.ordered_agents() if (a.term or a.pane) and a.role != "subagent"][:9]
 
     def task_counts(self) -> tuple[int, int]:
         done = sum(1 for t in self.tasks.values() if t.status == "completed")
@@ -153,6 +162,8 @@ class State:
         if not self.first_ts or ev.ts < self.first_ts:
             self.first_ts = ev.ts
         self.last_ts = max(self.last_ts, ev.ts)
+        if ev.kind in ANSWERED and ev.agent in self.agents:
+            self.agents[ev.agent].hook_blocked = False
         handler = getattr(self, "_on_" + ev.kind, None)
         if handler:
             handler(ev)
@@ -167,6 +178,9 @@ class State:
             if self.herdr_agents:
                 self._sync_herdr(ev.ts)
         return a
+
+    def _on_term(self, ev: Event) -> None:
+        self.agent(ev.agent, ev.ts).term = ev.data.get("name", "")
 
     # ---- herdr ---------------------------------------------------------
     def _on_herdr_pane(self, ev: Event) -> None:
@@ -185,7 +199,7 @@ class State:
         for a in self.agents.values():
             info = by_pane.get(a.pane) or (by_session.get(a.session) if a.session else None)
             if not info:
-                a.blocked = False
+                a.herdr_blocked = False
                 continue
             if a.role == "subagent":        # shares its parent's pane; the parent carries the status
                 a.pane = a.pane or info["pane_id"]
@@ -195,7 +209,7 @@ class State:
             blocked = info.get("status") == "blocked"
             if blocked and not a.blocked:
                 self.say(ts, a.name, f"needs you · waiting in herdr pane {a.pane}", "warn")
-            a.blocked = blocked
+            a.herdr_blocked = blocked
 
     def _on_team(self, ev: Event) -> None:
         self.team = ev.data.get("team", self.team)
@@ -304,6 +318,8 @@ class State:
 
     def _on_notification(self, ev: Event) -> None:
         a = self._touch(ev)
+        if ev.data.get("attention") and a.role != "subagent":
+            a.hook_blocked = True
         self.say(ev.ts, a.name, ev.detail or "notification", "warn")
 
     def _on_compact(self, ev: Event) -> None:
